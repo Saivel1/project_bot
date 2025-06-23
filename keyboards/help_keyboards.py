@@ -19,6 +19,17 @@ class HelpKeyboards:
         ])
         return keyboard
 
+    @staticmethod
+    def help_main_new(back_target: str):
+        """Клавиатура для неоплаченных пользователей"""
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Помощь с оплатой и личный кабинетом", callback_data="help_per_acc")],
+            [InlineKeyboardButton(text="Помощь с пробным периодом", callback_data="help_period")],
+            [InlineKeyboardButton(text="Помощь с реферальной программой", callback_data="help_refferal")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")]
+        ])
+        return keyboard
+
     # Меню помощи с установкой VPN
     @staticmethod
     def help_install_vpn():
@@ -32,12 +43,12 @@ class HelpKeyboards:
 
     # Меню помощи с оплатой и личным кабинетом
     @staticmethod
-    def help_per_acc():
+    def help_per_acc(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Нет моего банка", callback_data="help_bank")],
             [InlineKeyboardButton(text="Деньги списались, но нет подписки", callback_data="help_paid_not_active")],
             [InlineKeyboardButton(text="Не могу перейти по ссылки", callback_data="help_link_inactive")],
-            [InlineKeyboardButton(text="Назад", callback_data="help")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")],
         ])
         return keyboard
 
@@ -52,9 +63,16 @@ class HelpKeyboards:
 
     # Меню помощи с реферальной программой
     @staticmethod
-    def help_refferal():
+    def help_refferal(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="За друга не начислили дни", callback_data="help_refferal_not_add")],
-            [InlineKeyboardButton(text="Назад", callback_data="help")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")],
+        ])
+        return keyboard
+
+    @staticmethod
+    def help_message():
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Главное меню", callback_data="start_menu")],
         ])
         return keyboard

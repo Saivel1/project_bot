@@ -13,8 +13,8 @@ class VPNRefferalKeyboards:
         return keyboard
 
     @staticmethod
-    def invite_menu():
+    def invite_menu(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="refferal")]
+            [InlineKeyboardButton(text="Назад", callback_data=f'{back_target}')]
         ])
         return keyboard

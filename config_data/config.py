@@ -20,6 +20,16 @@ class Config:
     tg_bot: TgBot
 
 
+@dataclass
+class HelpAcc:
+    tg_user: str
+
+@dataclass
+class ConfigHelp:
+    tg: HelpAcc
+
+
+
 def load_config(path: str | None = None) -> Config:
 
     env: Env = Env()
@@ -28,5 +38,16 @@ def load_config(path: str | None = None) -> Config:
     return Config(
         tg_bot=TgBot(
             token=env('BOT_TOKEN')
+        )
+    )
+
+def load_config_help(path: str | None = None) -> ConfigHelp:
+
+    env: Env = Env()
+    env.read_env(path)
+
+    return ConfigHelp(
+        tg=HelpAcc(
+            tg_user=env('HELP_ACC')
         )
     )

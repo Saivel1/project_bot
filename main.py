@@ -16,7 +16,7 @@ BOT_TOKEN = bot_token
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-start_keyboard = start_menu.start_menu_keyboard()
+start_keyboard = start_menu.start_menu_keyboard_trail()
 
 
 # Этот хэндлер будет срабатывать на команду "/delmenu"
@@ -25,7 +25,7 @@ start_keyboard = start_menu.start_menu_keyboard()
 @dp.message(CommandStart())
 async def process_start_command(message: Message):
     await message.answer(
-        text='Это меню по кнопке старт',
+        text='Добро пожаловать!',
         reply_markup=start_keyboard
     )
 
@@ -34,4 +34,8 @@ dp.include_router(keyboard_handler.router)
 
 # Запускаем поллинг
 if __name__ == '__main__':
-    dp.run_polling(bot)
+    try:
+        print('Бот запущен!')
+        dp.run_polling(bot)
+    except KeyboardInterrupt:
+        print('Бот остановлен!')

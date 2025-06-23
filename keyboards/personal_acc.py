@@ -18,10 +18,39 @@ class VPNPersAccKeyboards:
         ])
         return keyboard
 
+    # ===========================================================
+    # Кнопки когда новый пользователь.
+    # ===========================================================
+    @staticmethod
+    def personal_acc_new():
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пополнить балланс", callback_data="buy_key")],
+            [InlineKeyboardButton(text="Активировать пробный период", callback_data="trial_per")],
+            [InlineKeyboardButton(text="Помощь", callback_data="help_per_acc_in_per_acc")],
+            [InlineKeyboardButton(text="Назад", callback_data="start_menu")]
+        ])
+        return keyboard
+
     @staticmethod
     def change_email():
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Назад", callback_data="personal_acc")]
+        ])
+        return keyboard
+
+    # ===========================================================
+    # Кнопки пополнения балланса, когда новый пользователь
+    # ===========================================================
+    @staticmethod
+    def choose_plan_menu_new(back_target: str):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="1 мес. | 50 руб.", callback_data="to_pay_month")],
+            [InlineKeyboardButton(text="3 мес. | 150 руб.", callback_data="to_pay_3_months")],
+            [InlineKeyboardButton(text="6 мес. | 300 руб.", callback_data="to_pay_6_months")],
+            [InlineKeyboardButton(text="1 год. | 600 руб.", callback_data="to_pay_year")],
+            [InlineKeyboardButton(text="Активировать пробный период", callback_data="trial_per")],
+            [InlineKeyboardButton(text="Помощь", callback_data="help_per_acc")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")],
         ])
         return keyboard
 

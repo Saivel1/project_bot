@@ -7,6 +7,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 class VPNInstallKeyboards:
     """Класс для управления клавиатурами установки VPN"""
 
+    # ===========================================================
+    # Кнопка, когда закончился балланс.
+    # ===========================================================
     @staticmethod
     def not_paid_install():
         """Клавиатура для неоплаченных пользователей"""
@@ -15,6 +18,21 @@ class VPNInstallKeyboards:
             [InlineKeyboardButton(text="Пригласить друга", callback_data="invite")],
             [InlineKeyboardButton(text="Помощь", callback_data="help")],
             [InlineKeyboardButton(text="Назад", callback_data="back")]
+        ])
+        return keyboard
+
+    # ===========================================================
+    # Кнопка, когда баланс 0 и новый пользователь.
+    # ===========================================================
+    @staticmethod
+    def not_paid_install_new(back_target: str):
+        """Клавиатура для неоплаченных пользователей"""
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пополнить баланс", callback_data="buy_key_in_install")],
+            [InlineKeyboardButton(text="Пригласить друга", callback_data="invite_in_install")],
+            [InlineKeyboardButton(text="Активировать пробный период", callback_data="trial_per")],
+            [InlineKeyboardButton(text="Помощь", callback_data="help_install_vpn")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")]
         ])
         return keyboard
 
