@@ -11,7 +11,6 @@ from status.status_keys import get_message_by_status
 class EmailForm(StatesGroup):
     waiting_for_email = State()
 
-
 @dataclass(slots=True, frozen=True)
 class UserData:
     """Структура данных пользователя для FSMContext"""
@@ -49,7 +48,6 @@ async def update_user_field(state: FSMContext, **kwargs) -> UserData:
     updated = UserData(**current_dict)
     await save_user_data(state, updated)
     return updated
-
 
 SIMPLE_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
