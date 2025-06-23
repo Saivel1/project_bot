@@ -36,6 +36,17 @@ def start_menu_keyboard():
     ])
     return keyboard
 
+#Пробный период активирован, нет подписки
+def start_menu_keyboard_trial_in_progress():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Установка VPN", callback_data="install_vpn")],
+        [InlineKeyboardButton(text="Личный кабинет", callback_data="personal_acc")],
+        [InlineKeyboardButton(text="Купить подписку", callback_data="buy_key")],
+        [InlineKeyboardButton(text="Реферальная программа", callback_data="refferal")],
+        [InlineKeyboardButton(text="Помощь", callback_data="help")]
+    ])
+    return keyboard
+
 def start_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Начать", callback_data="starting")]

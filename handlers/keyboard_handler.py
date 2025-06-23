@@ -6,18 +6,18 @@ from aiogram.fsm.context import FSMContext
 from dataclasses import dataclass, asdict
 from typing import Optional
 import re
-from status.status_keys import (
-    TRAIL_NOT_USED,
-    get_message_by_status
-)
+from status.status_keys import get_message_by_status
+
+class EmailForm(StatesGroup):
+    waiting_for_email = State()
+
 
 @dataclass(slots=True, frozen=True)
 class UserData:
     """Структура данных пользователя для FSMContext"""
     email: Optional[str] = None
     balance: int = 0
-    status: str = 'new'
-    trial: bool = False
+    trial: str = 'never_used'
     subscription_end: Optional[str] = None
     nickname: Optional[str] = None
     referral_count: int = 0
@@ -29,8 +29,7 @@ async def get_user_data(state: FSMContext) -> UserData:
     return UserData(
         email=data.get('email'),
         balance=data.get('balance', 0),
-        status=data.get('status', 'new'),
-        trial=data.get('trial', False),
+        trial=data.get('trial', 'never_used'),
         subscription_end=data.get('subscription_end'),
         nickname=data.get('nickname'),
         referral_count=data.get('referral_count', 0),
@@ -53,7 +52,6 @@ async def update_user_field(state: FSMContext, **kwargs) -> UserData:
 
 
 SIMPLE_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-NICKNAME_PATTERN = r'@[a-zA-Z0-9._%+-]+'
 
 router = Router()
 
@@ -79,15 +77,10 @@ def create_personal_acc_text(balance: int = 0, used: int = 0, email: str = None)
 @router.callback_query(F.data == 'trial_per')
 async def trial_per(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
-    print(f'До {user_data}')
-
     # Активируем пробный период
-    user_data = await update_user_field(state, trial=True)
-
+    user_data = await update_user_field(state, trial='in_progress')
     # Используем функцию для получения правильного сообщения
-    message = get_message_by_status('start_menu', user_data.status, user_data.trial)
-
-    print(f'После {user_data}')
+    message = get_message_by_status('start_menu', user_data.trial, user_data.balance)
     await callback.message.edit_text(
         text=message['text'],
         reply_markup=message['keyboard']
@@ -98,7 +91,7 @@ async def personal_acc(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
     text_message = create_personal_acc_text(user_data.balance, used, user_data.email)
 
-    if user_data.trial == False:
+    if user_data.trial == 'never_used':
         keyboard = per_acc.VPNPersAccKeyboards.personal_acc_new()
     else:
         keyboard = per_acc.VPNPersAccKeyboards.personal_acc()
@@ -106,6 +99,60 @@ async def personal_acc(callback: CallbackQuery, state: FSMContext):
         text=text_message,
         reply_markup=keyboard
     )
+
+@router.callback_query(F.data.in_(["to_pay_year", "to_pay_6_months", "to_pay_3_months", "to_pay_month"]))
+async def handler_payment_success(callback: CallbackQuery, state: FSMContext):
+    user_data = await get_user_data(state)
+    plan = {
+        "to_pay_year": 600,
+        "to_pay_6_months": 300,
+        "to_pay_3_months": 150,
+        "to_pay_month": 50
+    }
+    new_balance = user_data.balance + plan[callback.data]
+    await update_user_field(state, balance=new_balance)
+
+    message = get_message_by_status("payment_success", user_data.trial, user_data.balance)
+
+    await callback.message.edit_text(
+        text=message['text'],
+        reply_markup=message['keyboard']
+    )
+
+@router.callback_query(F.data == "change_email")
+async def request_email_with_state(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EmailForm.waiting_for_email)
+    await callback.message.answer("📧 Введите ваш email:")
+    await callback.answer()
+
+@router.message(EmailForm.waiting_for_email, F.text)
+async def process_email(message: Message, state: FSMContext):
+    email = message.text.strip()
+
+    if is_valid_email_simple(email):
+        await state.update_data(email=email)
+        await state.set_state(None)
+        keyboard = per_acc.VPNPersAccKeyboards.change_email()
+        await message.answer(f"✅ Email {email} сохранен!", reply_markup=keyboard)
+
+    else:
+        await message.answer("❌ Неправильный формат email. Попробуйте еще раз:")
+
+@router.callback_query(F.data.in_(['buy_key', 'buy_key_in_install']))
+async def buy_key(callback: CallbackQuery, state: FSMContext):
+    user_data = await get_user_data(state)
+    if user_data.email is None:
+        await state.set_state(EmailForm.waiting_for_email)
+        await callback.message.answer("📧 Введите ваш email:")
+        await callback.answer()
+    else:
+        message = get_message_by_status(callback.data, user_data.trial, user_data.balance)
+        await callback.message.edit_text(
+            text=message['text'],
+            reply_markup=message['keyboard']
+        )
+
+
 
 
 # ==========================================
@@ -117,7 +164,7 @@ async def universal_handler(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
 
     # Используем функцию для получения сообщения по статусу
-    message = get_message_by_status(callback.data, user_data.status, user_data.trial)
+    message = get_message_by_status(callback.data, user_data.trial, user_data.balance)
 
     await callback.message.edit_text(
         text=message['text'],

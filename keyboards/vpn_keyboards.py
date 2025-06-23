@@ -37,41 +37,21 @@ class VPNInstallKeyboards:
         return keyboard
 
     @staticmethod
-    def choose_platform(menu_position: str):
-        """Клавиатура выбора платформы"""
+    def choose_platform(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Android", callback_data="android"),
                 InlineKeyboardButton(text="IOS | MacOS", callback_data="ios"),
                 InlineKeyboardButton(text="Windows", callback_data="windows"),
             ],
-            [InlineKeyboardButton(text="Назад", callback_data=f"{menu_position}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"{back_target}")],
         ])
         return keyboard
 
     @staticmethod
-    def android_platform():
-        """Клавиатура для платформы Android"""
+    def platform_chosen():
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Помощь", callback_data="help_install_vpn")],
-            [InlineKeyboardButton(text="Назад", callback_data="install_vpn")]
-        ])
-        return keyboard
-
-    @staticmethod
-    def ios_platform():
-        """Клавиатура для платформы iOS"""
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Помощь", callback_data="help")],
-            [InlineKeyboardButton(text="Назад", callback_data="install_vpn")]
-        ])
-        return keyboard
-
-    @staticmethod
-    def windows_platform():
-        """Клавиатура для платформы Windows"""
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Помощь", callback_data="help")],
             [InlineKeyboardButton(text="Назад", callback_data="install_vpn")]
         ])
         return keyboard

@@ -4,6 +4,11 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 from keyboards import start_menu
 from handlers import keyboard_handler
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from status.status_keys import get_message_by_status
+from handlers.keyboard_handler import get_user_data
+
 
 
 # Загружаем конфиг в переменную
@@ -16,18 +21,21 @@ BOT_TOKEN = bot_token
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-start_keyboard = start_menu.start_menu_keyboard_trail()
-
 
 # Этот хэндлер будет срабатывать на команду "/delmenu"
 # и удалять кнопку Menu c командами
 
 @dp.message(CommandStart())
-async def process_start_command(message: Message):
+async def process_start_command(message: Message, state: FSMContext):
+    user_data = await get_user_data(state)
+    message_text = get_message_by_status('start_menu', user_data.trial, user_data.balance)
     await message.answer(
-        text='Добро пожаловать!',
-        reply_markup=start_keyboard
+        text=message_text['text'],
+        reply_markup=message_text['keyboard']
     )
+
+
+
 
 dp.include_router(keyboard_handler.router)
 
