@@ -55,7 +55,6 @@ async def update_user_field(state: FSMContext, **kwargs) -> UserData:
 SIMPLE_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 router = Router()
-
 used = 0
 
 def is_valid_email_simple(email: str) -> bool:
@@ -121,7 +120,6 @@ async def after_change_email(callback: CallbackQuery, state: FSMContext):
 async def trial_per(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
     current_date = datetime.timestamp(datetime.now())
-
     # Активируем пробный период
     user_data = await update_user_field(state, trial='in_progress')
     # Используем функцию для получения правильного сообщения
@@ -130,10 +128,32 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
     n_days = 30
     if current_date > user_data.subscription_end:
         new_date = current_date + (n_days * 86400)
+        new_date = int(new_date)
         await update_user_field(state, subscription_end=new_date)
     else:
         new_date = user_data.subscription_end + (n_days * 86400)
+        new_date = int(new_date)
         await update_user_field(state, subscription_end=new_date)
+
+    await callback.message.edit_text(
+        text="Активация пробного периода...",
+        reply_markup=None
+    )
+
+    async with MarzbanBackendContext() as backend:
+        res = await backend.get_user(str(callback.from_user.id))
+        if res:
+            data_to_modify = {'expire': new_date}
+            new_link = res['subscription_url']
+            sub_end = await backend.modify_user(str(callback.from_user.id), data_to_modify)
+            await update_user_field(state, link=new_link)
+        else:
+            data_to_modify = {'expire': new_date}
+            res = await backend.create_user(str(callback.from_user.id))
+            new_link = res['subscription_url']
+            sub_end = await backend.modify_user(str(callback.from_user.id), data_to_modify)
+            await update_user_field(state, link=new_link)
+
 
 
     await callback.message.edit_text(
@@ -143,13 +163,7 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == 'personal_acc')
 async def personal_acc(callback: CallbackQuery, state: FSMContext):
-    
-    async with MarzbanBackendContext() as backend:
-        res = await backend.get_user(str(callback.from_user.id))
-        if not res:
-            new_link = None
-            await update_user_field(state, link=new_link)
-            
+
     user_data = await get_user_data(state)
 
     text_message = create_personal_acc_text(user_data.balance, used, user_data.email, user_data.subscription_end)
@@ -176,15 +190,13 @@ async def handler_payment_success(callback: CallbackQuery, state: FSMContext):
     current_date = int(datetime.timestamp(datetime.now()))
     new_balance = user_data.balance + plan[callback.data]
 
-    print(f'Это дата: {current_date}')
-    
     if current_date > user_data.subscription_end:
         new_date = current_date + (plan[callback.data] * 86400)//50
         await update_user_field(state, subscription_end=new_date)
     else:
         new_date = user_data.subscription_end + (plan[callback.data] * 86400)//50
         await update_user_field(state, subscription_end=new_date)
-    print(f'Это дата: {current_date} | А это новый баланс: {new_date}')
+
     await update_user_field(state, balance=new_balance)
 
     message = get_message_by_status("payment_success", user_data.trial, user_data.subscription_end)

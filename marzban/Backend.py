@@ -2,6 +2,12 @@ from types import NoneType
 import aiohttp
 import asyncio
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
+logging.basicConfig(level=logging.WARNING, format=format)
+
 
 #MARZBAN_API_URL = "https://ivvpn.digital"  # Замените на URL вашего Marzban API
 #MARZBAN_USER = "admin"  # Замените на имя пользователя Marzban
@@ -42,6 +48,8 @@ class MarzbanBackendContext:
                 result = await response.json()
                 token = result.get("access_token")
                 self.headers["Authorization"] = f"Bearer {token}"
+            else:
+                logger.warning(f"Ошибка авторизации: {response.status}")
 
     async def create_user(self, username: str) -> dict:
         data = {
@@ -54,6 +62,8 @@ class MarzbanBackendContext:
                                    headers=self.headers, json=data) as response:
             if response.status in (200, 201):
                 return await response.json()
+            else:
+                logger.warning(f"Ошибка создания пользователя: {response.status}")
         return None # type: ignore
 
     async def get_user(self, username: str) -> dict:
@@ -62,6 +72,8 @@ class MarzbanBackendContext:
                                    headers=self.headers) as response:
             if response.status in (200, 201):
                 return await response.json()
+            else:
+                logger.warning(f"Ошибка получения пользователя: {response.status}")
         return False # type: ignore
 
     async def get_users(self) -> dict:
@@ -70,6 +82,8 @@ class MarzbanBackendContext:
                                    headers=self.headers) as response:
             if response.status in (200, 201):
                 return await response.json()
+            else:
+                logger.warning(f"Ошибка получения пользователей: {response.status}")
         return None # type: ignore
 
     async def delete_user(self, username: str) -> dict:
@@ -78,6 +92,8 @@ class MarzbanBackendContext:
                                    headers=self.headers) as response:
             if response.status in (200, 201):
                 return await response.json()
+            else:
+                logger.warning(f"Ошибка удаления пользователя: {response.status}")
         return None # type: ignore
 
     async def set_inactive(self, username: str) -> dict:
@@ -92,4 +108,11 @@ class MarzbanBackendContext:
                 return await response.json()
         return None # type: ignore
 
-
+    async def modify_user(self, username: str, data: dict) -> dict:
+        async with self.session.put(f"{self.base_url}/api/user/{username}", # type: ignore
+                                   headers=self.headers, json=data) as response:
+            if response.status in (200, 201):
+                return await response.json()
+            else:
+                logger.warning(f"Ошибка изменения пользователя: {response.status}")
+        return None # type: ignore

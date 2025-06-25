@@ -1,4 +1,3 @@
-import datetime
 from config_data.config import load_config
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
@@ -32,20 +31,12 @@ dp = Dispatcher()
 async def process_start_command(message: Message, state: FSMContext):
     user_data = await get_user_data(state)
     message_text = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end)
-    async with MarzbanBackendContext() as backend:
-        res = await backend.get_user(str(message.from_user.id))
-        if res:
-            res = res['subscription_url']
-            await update_user_field(state, link=res)
-        else:
-            res = await backend.create_user(str(message.from_user.id))
-            res = res['subscription_url']
-            await update_user_field(state, link=res)
 
     await message.answer(
         text=message_text['text'],
         reply_markup=message_text['keyboard']
     )
+
 
 
 
