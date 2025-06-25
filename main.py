@@ -1,3 +1,4 @@
+import datetime
 from config_data.config import load_config
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
@@ -7,7 +8,9 @@ from handlers import keyboard_handler
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from status.status_keys import get_message_by_status
-from handlers.keyboard_handler import get_user_data
+from handlers.keyboard_handler import get_user_data, update_user_field
+from datetime import datetime
+from marzban.Backend import MarzbanBackendContext
 
 
 
@@ -28,7 +31,17 @@ dp = Dispatcher()
 @dp.message(CommandStart())
 async def process_start_command(message: Message, state: FSMContext):
     user_data = await get_user_data(state)
-    message_text = get_message_by_status('start_menu', user_data.trial, user_data.balance)
+    message_text = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end)
+    async with MarzbanBackendContext() as backend:
+        res = await backend.get_user(str(message.from_user.id))
+        if res:
+            res = res['subscription_url']
+            await update_user_field(state, link=res)
+        else:
+            res = await backend.create_user(str(message.from_user.id))
+            res = res['subscription_url']
+            await update_user_field(state, link=res)
+
     await message.answer(
         text=message_text['text'],
         reply_markup=message_text['keyboard']

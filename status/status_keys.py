@@ -1,5 +1,6 @@
 from keyboards import vpn_keyboards as vpn, start_menu, help_keyboards as help_k, personal_acc as per_acc, refferal
 from config_data.config import load_config_help
+from datetime import datetime
 
 config = load_config_help('.env')
 help_acc = config.tg.tg_user
@@ -157,7 +158,7 @@ TRIAL_IN_PROGRESS_NOT_PAID = {
 }
 
 # =============================================================================
-# СООБЩЕНИЯ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ С ИСТЕКШИМ ПРОБНЫМ ПЕРИОДОМ
+# СООБЩЕНИЯ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ С ИСТЕКШИМ ПРОБНЫМ ПЕРИОДОМ И НЕ КУПЛЕННОЙ ПОДПИСКОЙ
 # =============================================================================
 
 MUST_PAY = {
@@ -290,7 +291,7 @@ def get_platform_message(platform: str) -> dict:
 # ОСНОВНАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЙ
 # =============================================================================
 
-def get_message_by_status(callback_data: str, trial: str = 'never_used', balance: int = 0) -> dict:
+def get_message_by_status(callback_data: str, trial: str = 'never_used', subscription_end: int = 0) -> dict:
     """
     Возвращает сообщение в зависимости от статуса пользователя
 
@@ -318,14 +319,16 @@ def get_message_by_status(callback_data: str, trial: str = 'never_used', balance
     if callback_data == 'payment_success':
         return PAID['payment_success']
 
+    current_date = int(datetime.timestamp(datetime.now()))
+
     # Выбор словаря сообщений по статусу
-    if trial == 'never_used' and balance == 0:
+    if trial == 'never_used' and subscription_end == 0:
         messages = TRAIL_NOT_USED
-    elif trial == 'never_used' and balance > 0:
+    elif trial == 'never_used' and subscription_end > current_date:
         messages = TRAIL_NOT_USED_PAID
-    elif trial == 'in_progress' and balance == 0:
+    elif trial == 'in_progress' and subscription_end == 0:
         messages = TRIAL_IN_PROGRESS_NOT_PAID
-    elif trial == 'expired' and balance == 0:
+    elif trial == 'expired' and subscription_end < current_date:
         messages = MUST_PAY
     else:
         messages = PAID
