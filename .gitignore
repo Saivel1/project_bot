@@ -1,2 +1,25 @@
+# Виртуальные окружения
 .venv/
+venv/
+
+# IDE
 .vscode/
+.idea/
+
+# Python кэш
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python файлы
+**/init*.py
+**/__init__.py
+
+# Проект специфичное
+.env
+
+# Кэш и временные файлы
+.mypy_cache/
+.pytest_cache/
+*.log
