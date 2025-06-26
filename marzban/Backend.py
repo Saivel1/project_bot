@@ -10,8 +10,6 @@ MARZBAN_API_URL = config.url
 MARZBAN_USER = config.login
 MARZBAN_PASSWORD = config.password
 
-print(f'Ссылка: {MARZBAN_API_URL} + User: {MARZBAN_USER} + Password: {MARZBAN_PASSWORD}')
-
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
 logging.basicConfig(level=logging.WARNING, format=format)

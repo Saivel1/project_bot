@@ -28,6 +28,7 @@ class UserData:
     email: Optional[str] = None
     balance: int = 0
     trial: str = 'never_used'
+    trial_end: int = 0
     subscription_end: int = 0
     nickname: Optional[str] = None
     referral_count: int = 0
@@ -42,6 +43,7 @@ async def get_user_data(state: FSMContext) -> UserData:
         email=data.get('email'),
         balance=data.get('balance', 0),
         trial=data.get('trial', 'never_used'),
+        trial_end=data.get('trial_end', 0),
         subscription_end=data.get('subscription_end', 0),
         nickname=data.get('nickname'),
         referral_count=data.get('referral_count', 0),
@@ -141,11 +143,11 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
     if current_date > user_data.subscription_end:
         new_date = current_date + (n_days * 86400)
         new_date = int(new_date)
-        await update_user_field(state, subscription_end=new_date)
+        await update_user_field(state, subscription_end=new_date, trial_end=new_date)
     else:
         new_date = user_data.subscription_end + (n_days * 86400)
         new_date = int(new_date)
-        await update_user_field(state, subscription_end=new_date)
+        await update_user_field(state, subscription_end=new_date, trial_end=new_date)
 
     await callback.message.edit_text(
         text="Активация пробного периода...",
@@ -305,6 +307,9 @@ async def invite_handler(callback: CallbackQuery, state: FSMContext):
 @router.callback_query()
 async def universal_handler(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
+    current_date = int(datetime.timestamp(datetime.now()))
+    if current_date > user_data.subscription_end:
+        user_data = await update_user_field(state, trial='expired')
 
     # Используем функцию для получения сообщения по статусу
     message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)

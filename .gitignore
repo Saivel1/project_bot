@@ -12,10 +12,6 @@ __pycache__/
 *$py.class
 *.so
 
-# Python файлы
-**/init*.py
-**/__init__.py
-
 # Проект специфичное
 .env
 
@@ -23,3 +19,8 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 *.log
+
+*.db
+*.sqlite
+*.sqlite3
+*.tmp
