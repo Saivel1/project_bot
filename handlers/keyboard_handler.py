@@ -1,4 +1,5 @@
 from os import link
+import logging
 from keyboards import personal_acc as per_acc
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -10,6 +11,10 @@ import re
 from status.status_keys import get_message_by_status
 from datetime import datetime
 from marzban.Backend import MarzbanBackendContext
+
+logger = logging.getLogger(__name__)
+format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=format)
 
 class EmailForm(StatesGroup):
     waiting_for_email = State()
@@ -24,6 +29,16 @@ class UserData:
     nickname: Optional[str] = None
     referral_count: int = 0
     link: Optional[str] = None
+
+async def get_trafic(callback: CallbackQuery) -> int:
+    async with MarzbanBackendContext() as backend:
+        user_id = str(callback.from_user.id)
+        res = await backend.get_user(user_id)
+        if res:
+            res = res['used_traffic']
+            return int(res)
+        else:
+            return 0
 
 async def get_user_data(state: FSMContext) -> UserData:
     """Получает данные пользователя из FSM как dataclass"""
@@ -55,7 +70,6 @@ async def update_user_field(state: FSMContext, **kwargs) -> UserData:
 SIMPLE_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 router = Router()
-used = 0
 
 def is_valid_email_simple(email: str) -> bool:
     if not email or not isinstance(email, str):
@@ -66,6 +80,8 @@ def create_personal_acc_text(balance: int = 0, used: int = 0, email: str = '', s
     current_date = int(datetime.timestamp(datetime.now()))
     email_text = email if email else "Не указан"
     balance_text = balance if balance else 0
+    used = used // 1024**2
+
     if current_date > subscription_end:
         sub_text = 0
         hours = 0
@@ -77,7 +93,7 @@ def create_personal_acc_text(balance: int = 0, used: int = 0, email: str = '', s
 
 💰 Потрачено в сервисе: {balance_text} ₽
 💰 Дней подписки: {int(sub_text)} | Часов: {int(hours)}
-📈 Использовано: {used} ГБ
+📈 Использовано: {used} МБ
 📧 Ваш email: {email_text}
     """.strip()
 
@@ -154,8 +170,6 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
             sub_end = await backend.modify_user(str(callback.from_user.id), data_to_modify)
             await update_user_field(state, link=new_link)
 
-
-
     await callback.message.edit_text(
         text=message['text'],
         reply_markup=message['keyboard']
@@ -165,6 +179,13 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
 async def personal_acc(callback: CallbackQuery, state: FSMContext):
 
     user_data = await get_user_data(state)
+
+    await callback.message.edit_text(
+        text=f'Загружаем личный кабинет...',
+        reply_markup=None
+    )
+
+    used = await get_trafic(callback)
 
     text_message = create_personal_acc_text(user_data.balance, used, user_data.email, user_data.subscription_end)
     link = user_data.link if user_data.link and (user_data.trial != 'never_used' or user_data.subscription_end) else "Пока пусто."
@@ -191,15 +212,35 @@ async def handler_payment_success(callback: CallbackQuery, state: FSMContext):
     new_balance = user_data.balance + plan[callback.data]
 
     if current_date > user_data.subscription_end:
-        new_date = current_date + (plan[callback.data] * 86400)//50
+        new_date = current_date + (plan[callback.data] * 86400 * 30)//50
         await update_user_field(state, subscription_end=new_date)
     else:
-        new_date = user_data.subscription_end + (plan[callback.data] * 86400)//50
+        new_date = user_data.subscription_end + (plan[callback.data] * 86400 * 30)//50
         await update_user_field(state, subscription_end=new_date)
 
     await update_user_field(state, balance=new_balance)
 
     message = get_message_by_status("payment_success", user_data.trial, user_data.subscription_end)
+
+    await callback.message.edit_text(
+        text="Обработка платежа...",
+        reply_markup=None)
+
+    user_id = str(callback.from_user.id)
+    async with MarzbanBackendContext() as backend:
+        res = await backend.get_user(user_id)
+
+        if res:
+            data_to_modify = {'expire': new_date}
+            new_link = res['subscription_url']
+            sub_end = await backend.modify_user(user_id, data_to_modify)
+            await update_user_field(state, link=new_link)
+        else:
+            data_to_modify = {'expire': new_date}
+            res = await backend.create_user(user_id)
+            new_link = res['subscription_url']
+            sub_end = await backend.modify_user(user_id, data_to_modify)
+            await update_user_field(state, link=new_link)
 
     await callback.message.edit_text(
         text=message['text'],
