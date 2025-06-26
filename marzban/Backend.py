@@ -3,19 +3,19 @@ import aiohttp
 import asyncio
 import json
 import logging
+from config_data.config import load_config_marz
+
+config = load_config_marz('.env')
+MARZBAN_API_URL = config.url
+MARZBAN_USER = config.login
+MARZBAN_PASSWORD = config.password
+
+print(f'Ссылка: {MARZBAN_API_URL} + User: {MARZBAN_USER} + Password: {MARZBAN_PASSWORD}')
 
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
 logging.basicConfig(level=logging.WARNING, format=format)
 
-
-#MARZBAN_API_URL = "https://ivvpn.digital"  # Замените на URL вашего Marzban API
-#MARZBAN_USER = "admin"  # Замените на имя пользователя Marzban
-#MARZBAN_PASSWORD = "aX8xH7pD9ugD"  # Замените на пароль пользователя Marzban
-
-MARZBAN_API_URL = "https://bratva1234.duckdns.org:64526"  # Замените на URL вашего Marzban API
-MARZBAN_USER = "iv"  # Замените на имя пользователя Marzban
-MARZBAN_PASSWORD = "M7L7Snhagn"  # Замените на пароль пользователя Marzban
 
 class MarzbanBackendContext:
     def __init__(self):

@@ -11,6 +11,9 @@ import re
 from status.status_keys import get_message_by_status
 from datetime import datetime
 from marzban.Backend import MarzbanBackendContext
+from refferal.refferal_logic import generate_refferal_code, ref_base
+from refferal.refferal_handler import reward_add, reward_set, switch_to_used
+
 
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
@@ -29,16 +32,8 @@ class UserData:
     nickname: Optional[str] = None
     referral_count: int = 0
     link: Optional[str] = None
+    first_visit_completed: bool = False
 
-async def get_trafic(callback: CallbackQuery) -> int:
-    async with MarzbanBackendContext() as backend:
-        user_id = str(callback.from_user.id)
-        res = await backend.get_user(user_id)
-        if res:
-            res = res['used_traffic']
-            return int(res)
-        else:
-            return 0
 
 async def get_user_data(state: FSMContext) -> UserData:
     """Получает данные пользователя из FSM как dataclass"""
@@ -50,7 +45,8 @@ async def get_user_data(state: FSMContext) -> UserData:
         subscription_end=data.get('subscription_end', 0),
         nickname=data.get('nickname'),
         referral_count=data.get('referral_count', 0),
-        link=data.get('link')
+        link=data.get('link'),
+        first_visit_completed=data.get('first_visit_completed', False)
     )
 
 async def save_user_data(state: FSMContext, user_data: UserData):
@@ -76,12 +72,10 @@ def is_valid_email_simple(email: str) -> bool:
         return False
     return bool(re.match(SIMPLE_EMAIL_PATTERN, email.strip()))
 
-def create_personal_acc_text(balance: int = 0, used: int = 0, email: str = '', subscription_end: int = 0) -> str:
+def create_personal_acc_text(balance: int = 0, email: str = '', subscription_end: int = 0) -> str:
     current_date = int(datetime.timestamp(datetime.now()))
     email_text = email if email else "Не указан"
     balance_text = balance if balance else 0
-    used = used // 1024**2
-
     if current_date > subscription_end:
         sub_text = 0
         hours = 0
@@ -92,17 +86,18 @@ def create_personal_acc_text(balance: int = 0, used: int = 0, email: str = '', s
 📊 Личный кабинет
 
 💰 Потрачено в сервисе: {balance_text} ₽
-💰 Дней подписки: {int(sub_text)} | Часов: {int(hours)}
-📈 Использовано: {used} МБ
+📈 Дней подписки: {int(sub_text)} | Часов: {int(hours)}
+
 📧 Ваш email: {email_text}
     """.strip()
 
 @router.message(EmailForm.waiting_for_email, F.text == "/cancel")
 async def cancel_email(message: Message, state: FSMContext):
-    user_data = await get_user_data(state)
     await state.set_state(None)
+    user_data = await get_user_data(state)
     await message.answer("Отмена операции.")
-    messages = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end)
+    messages = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end, user_data.balance)
+
     await message.answer(
         text=messages['text'],
         reply_markup=messages['keyboard']
@@ -139,9 +134,10 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
     # Активируем пробный период
     user_data = await update_user_field(state, trial='in_progress')
     # Используем функцию для получения правильного сообщения
-    message = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end)
+    message = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end, user_data.balance)
     # Будет увеличиваться на N дней, пока остаётся нетронутым.
     n_days = 30
+
     if current_date > user_data.subscription_end:
         new_date = current_date + (n_days * 86400)
         new_date = int(new_date)
@@ -170,6 +166,9 @@ async def trial_per(callback: CallbackQuery, state: FSMContext):
             sub_end = await backend.modify_user(str(callback.from_user.id), data_to_modify)
             await update_user_field(state, link=new_link)
 
+    # Переключаем в True при активации пробного периода
+    await reward_set(ref_base, callback.from_user.id)
+
     await callback.message.edit_text(
         text=message['text'],
         reply_markup=message['keyboard']
@@ -180,14 +179,38 @@ async def personal_acc(callback: CallbackQuery, state: FSMContext):
 
     user_data = await get_user_data(state)
 
+    cnt = await reward_add(ref_base, callback.from_user.id)
+
+    out = cnt if cnt else 'Пока никого'
+
     await callback.message.edit_text(
-        text=f'Загружаем личный кабинет...',
+        text=f'Загружаем личный кабинет... \n\n\n Количество рефералов: {out}',
         reply_markup=None
     )
 
-    used = await get_trafic(callback)
+    total_ref_cnt = cnt + user_data.referral_count
+    await update_user_field(state, referral_count=total_ref_cnt)
+    current_date = int(datetime.timestamp(datetime.now()))
 
-    text_message = create_personal_acc_text(user_data.balance, used, user_data.email, user_data.subscription_end)
+    if cnt and (user_data.balance or user_data.trial != 'never_used'):
+        async with MarzbanBackendContext() as backend:
+            res = await backend.get_user(str(callback.from_user.id))
+            modified_data = 0
+            if res:
+                print(f'Количество людей: {cnt} Текущая дата: {current_date} Подписка: {user_data.subscription_end}')
+                if user_data.subscription_end > current_date:
+                    modified_data = user_data.subscription_end
+                else:
+                    modified_data = current_date
+
+                modified_data += 86400 * 7 * cnt
+                modified_data = int(modified_data)
+                data_to_modify = {'expire': modified_data}
+                mod_resp = await backend.modify_user(str(callback.from_user.id), data_to_modify)
+                user_data = await update_user_field(state, subscription_end=modified_data)
+                await switch_to_used(ref_base, callback.from_user.id)
+
+    text_message = create_personal_acc_text(user_data.balance, user_data.email, user_data.subscription_end)
     link = user_data.link if user_data.link and (user_data.trial != 'never_used' or user_data.subscription_end) else "Пока пусто."
     if user_data.trial == 'never_used':
         keyboard = per_acc.VPNPersAccKeyboards.personal_acc_new()
@@ -207,7 +230,7 @@ async def handler_payment_success(callback: CallbackQuery, state: FSMContext):
         "to_pay_3_months": 150,
         "to_pay_month": 50
     }
-
+    await reward_set(ref_base, callback.from_user.id)
     current_date = int(datetime.timestamp(datetime.now()))
     new_balance = user_data.balance + plan[callback.data]
 
@@ -220,7 +243,7 @@ async def handler_payment_success(callback: CallbackQuery, state: FSMContext):
 
     await update_user_field(state, balance=new_balance)
 
-    message = get_message_by_status("payment_success", user_data.trial, user_data.subscription_end)
+    message = get_message_by_status("payment_success", user_data.trial, user_data.subscription_end, user_data.balance)
 
     await callback.message.edit_text(
         text="Обработка платежа...",
@@ -256,14 +279,24 @@ async def buy_key(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("📧 Введите ваш email:")
         await callback.answer()
     else:
-        message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end)
+        message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
         await callback.message.edit_text(
             text=message['text'],
             reply_markup=message['keyboard']
         )
 
 
+@router.callback_query(F.data.in_(['invite_in_install', 'invite']))
+async def invite_handler(callback: CallbackQuery, state: FSMContext):
+    user_data = await get_user_data(state)
+    user_id = callback.from_user.id
+    message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
+    ref_link = generate_refferal_code(user_id)
 
+    await callback.message.edit_text(
+        text=f"{message['text']} \n\n\n {ref_link}",
+        reply_markup=message['keyboard']
+    )
 
 # ==========================================
 # Универсальный хэндлер с условиями
@@ -274,7 +307,7 @@ async def universal_handler(callback: CallbackQuery, state: FSMContext):
     user_data = await get_user_data(state)
 
     # Используем функцию для получения сообщения по статусу
-    message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end)
+    message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
     await callback.message.edit_text(
         text=message['text'],
         reply_markup=message['keyboard']

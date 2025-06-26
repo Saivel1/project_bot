@@ -11,7 +11,7 @@ help_acc = config.tg.tg_user
 
 COMMON_BUTTONS = {
     'invite':{
-        'text': "Пригласить друга",
+        'text': "👥 Пригласите друга и получите бонусы!",
         'keyboard': refferal.VPNRefferalKeyboards.invite_menu('refferal')
     },
     'help': {
@@ -291,7 +291,7 @@ def get_platform_message(platform: str) -> dict:
 # ОСНОВНАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЙ
 # =============================================================================
 
-def get_message_by_status(callback_data: str, trial: str = 'never_used', subscription_end: int = 0) -> dict:
+def get_message_by_status(callback_data: str, trial: str = 'never_used', subscription_end: int = 0, balance: int = 0) -> dict:
     """
     Возвращает сообщение в зависимости от статуса пользователя
 
@@ -324,10 +324,10 @@ def get_message_by_status(callback_data: str, trial: str = 'never_used', subscri
     # Выбор словаря сообщений по статусу
     if trial == 'never_used' and subscription_end == 0:
         messages = TRAIL_NOT_USED
+    elif trial == 'in_progress' and balance == 0:
+        messages = TRIAL_IN_PROGRESS_NOT_PAID
     elif trial == 'never_used' and subscription_end > current_date:
         messages = TRAIL_NOT_USED_PAID
-    elif trial == 'in_progress' and subscription_end == 0:
-        messages = TRIAL_IN_PROGRESS_NOT_PAID
     elif trial == 'expired' and subscription_end < current_date:
         messages = MUST_PAY
     else:
