@@ -73,6 +73,7 @@ class HelpKeyboards:
     @staticmethod
     def help_message():
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Главное меню", callback_data="start_menu")],
+            [InlineKeyboardButton(text="Оплатить ⭐", pay=True)],
+            [InlineKeyboardButton(text="Главное меню", callback_data="start_menu_in_payment")]
         ])
         return keyboard

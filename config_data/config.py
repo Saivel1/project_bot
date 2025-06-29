@@ -8,6 +8,7 @@ class DatabaseConfig:
     db_host: str          # URL-адрес базы данных
     db_user: str          # Username пользователя базы данных
     db_password: str      # Пароль к базе данных
+    db_port: int = 5433   # Порт базы данных
 
 
 @dataclass
@@ -78,4 +79,17 @@ def load_config_marz(path: str | None = None) -> Marzban:
         login=env('MARZBAN_USER'),
         password=env('MARZBAN_PASSWORD'),
         url=env('MARZBAN_API_URL')
+    )
+
+def load_config_db(path: str | None = None) -> DatabaseConfig:
+
+    env: Env = Env()
+    env.read_env(path)
+
+    return DatabaseConfig(
+        database=env('DB_NAME'),
+        db_host=env('DB_HOST'),
+        db_user=env('DB_USER'),
+        db_password=env('DB_PASSWORD'),
+        db_port=env('DB_PORT')
     )

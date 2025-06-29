@@ -1,14 +1,20 @@
-from config_data.config import load_config
+from config_data.config import load_config, load_config_db
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import CommandStart, CommandObject, Command
 from refferal.refferal_logic import safe_add_referral
 from aiogram.types import Message
 from handlers import keyboard_handler
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from status.status_keys import get_message_by_status
-from handlers.keyboard_handler import get_user_data, update_user_field
-
+from db.db_inject import db_manager
+import asyncio
+import logging
+from dataclasses import asdict
+from redis_bot.redis_main import RedisUserCache
+from redis_bot.redis_middleware import RedisMiddleware
+from status.block_middleware import UserBlockedMiddleware, UserUnblockedMiddleware
+from messages.sub_reminder import check_and_send_subscription_reminders
 
 
 # Загружаем конфиг в переменную
@@ -16,51 +22,59 @@ config = load_config('.env')
 bot_token = config.tg_bot.token
 BOT_TOKEN = bot_token
 
-
 # Создаем объекты бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
+async def on_startup():
+    """ТОЛЬКО инициализация БД и Redis"""
+    await db_manager.initialize_connection_pool()
+    await db_manager.create_tables()
+
+    global redis_cache_instance  # Сохраним в глобальную переменную
+    redis_cache_instance = RedisUserCache()
+    await redis_cache_instance.connect()
+
+    dp.message.middleware(UserUnblockedMiddleware())
+    dp.callback_query.middleware(UserUnblockedMiddleware())
+
+    # Регистрируем middleware для обработки ошибок блокировки
+    dp.errors.middleware(UserBlockedMiddleware())
+
+
+
+async def on_shutdown():
+    """Очистка при остановке бота"""
+    await db_manager.close_pool()
+    global redis_cache_instance
+    if redis_cache_instance:
+        await redis_cache_instance.disconnect()
+
 # Этот хэндлер будет срабатывать на команду "/delmenu"
 # и удалять кнопку Menu c командами
 
-@dp.message(CommandStart())
-async def process_start_command(message: Message, state: FSMContext, command: CommandObject):
-    user_data = await get_user_data(state)
-    message_text = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end)
-    ref_id = command.args
+async def main():
+    # Регистрируем startup/shutdown
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
 
-    if ref_id and not user_data.first_visit_completed:
-        try:
-            ref_id = int(ref_id)
-            user_id = int(message.from_user.id)
-            if ref_id == user_id:
-                raise ValueError
-            await safe_add_referral(user_id, ref_id)
-        except ValueError as e:
-            print(f"Ошибка при добавлении реферальной связи: {e}")
+    # РЕГИСТРИРУЕМ MIDDLEWARE ЗДЕСЬ, ПОСЛЕ startup
+    await on_startup()  # Сначала инициализируем Redis
+    # Теперь регистрируем middleware с уже подключенным Redis
+    dp.callback_query.middleware(RedisMiddleware(redis_cache_instance))
+    dp.message.middleware(RedisMiddleware(redis_cache_instance))
 
-    if not user_data.first_visit_completed:
-        await update_user_field(state, first_visit_completed=True)
-
-
-    await message.answer(
-        text=message_text['text'],
-        reply_markup=message_text['keyboard']
-    )
-
-
-
-
-
-dp.include_router(keyboard_handler.router)
+    asyncio.create_task(check_and_send_subscription_reminders(bot))
+    dp.include_router(keyboard_handler.router)
+    
+    await dp.start_polling(bot)
 
 
 # Запускаем поллинг
 if __name__ == '__main__':
     try:
         print('Бот запущен!')
-        dp.run_polling(bot)
+        asyncio.run(main())
     except KeyboardInterrupt:
         print('Бот остановлен!')

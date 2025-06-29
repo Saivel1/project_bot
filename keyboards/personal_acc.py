@@ -11,7 +11,6 @@ class VPNPersAccKeyboards:
     def personal_acc():
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Пополнить балланс", callback_data="buy_key")],
-            [InlineKeyboardButton(text="Изменить email", callback_data="change_email")],
             [InlineKeyboardButton(text="Помощь", callback_data="help_per_acc_in_per_acc")],
             [InlineKeyboardButton(text="Назад", callback_data="start_menu")]
         ])
@@ -30,12 +29,6 @@ class VPNPersAccKeyboards:
         ])
         return keyboard
 
-    @staticmethod
-    def change_email():
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="personal_acc")]
-        ])
-        return keyboard
 
     # ===========================================================
     # Кнопки пополнения балланса, когда новый пользователь
