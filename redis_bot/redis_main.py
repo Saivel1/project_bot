@@ -22,7 +22,7 @@ class RedisUserCache:
     """Класс для работы с кэшем пользователей в Redis"""
 
     def __init__(self, redis_url: str = "redis://localhost:6379",
-                 default_ttl: int = 30):  # 1 час по умолчанию
+                 default_ttl: int = 900):  # 15 минут по умолчанию
         self.redis_url = redis_url
         self.default_ttl = default_ttl
         self.redis_client: Optional[redis.Redis] = None

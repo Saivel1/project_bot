@@ -26,8 +26,8 @@ logging.basicConfig(level=logging.INFO, format=format)
 #####################################
 # Константы и конфигурация
 #####################################
-DAYS_PER_REFERRAL = 1
-TRIAL_DAYS = 3
+DAYS_PER_REFERRAL = 7
+TRIAL_DAYS = 30
 
 redis_cache = RedisUserCache()
 
@@ -298,8 +298,9 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        await db.log_user_action(user_id, callback.data)
 
        await callback.message.edit_text(
-           text=f'{text_message} \n\n Ссылка на подписку: {link}',
-           reply_markup=keyboard
+           text=f'{text_message} \n\n Ссылка на подписку: `{link}`',
+           reply_markup=keyboard,
+           parse_mode='Markdown'
        )
 
    except Exception as e:
@@ -359,15 +360,15 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
        )
 
        if marzban_available:
-           prices = [LabeledPrice(label="Премиум подписка", amount=1)]
+           prices = [LabeledPrice(label="Оплата", amount=plan[callback.data])]
            await callback.message.answer_invoice(
-               title=f"💫 Подписка на {plan[callback.data] // 30} месяцев.",
-               description=f'Для оформления подписки необходимо оплатить сумму ниже.',
+               title=f"💫 Подписка на {plan[callback.data] // 30} мес.",
+               description=f'Для оформления подписки необходимо произвести оплату.',
                payload=callback.data,
                currency="XTR",
                prices=prices,
                start_parameter="premium_payment",
-               reply_markup=help_message(1)
+               reply_markup=help_message(plan[callback.data])
            )
        else:
            message = get_message_by_status("payment_unsuccess", user_data.trial, user_data.subscription_end, user_data.balance)
@@ -418,12 +419,12 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
        new_balance = user_data.balance + amount
 
        if current_date > user_data.subscription_end:
-           #new_date = current_date + (amount * 86400 * 30) // 50
+           new_date = current_date + (amount * 86400 * 30) // 50
             # Для теста поставим пол дня или несколько часов
-           new_date = current_date + (amount * 3600 * 6) // 50
+           #new_date = current_date + (amount * 3600 * 6) // 50
        else:
-           #new_date = user_data.subscription_end + (amount * 86400 * 30) // 50
-           new_date = user_data.subscription_end + (amount * 3600 * 6) // 50
+           new_date = user_data.subscription_end + (amount * 86400 * 30) // 50
+           #new_date = user_data.subscription_end + (amount * 3600 * 6) // 50
 
        if not validate_positive_int(new_date, "subscription_end_date"):
            raise ValueError("Некорректная дата окончания подписки")

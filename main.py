@@ -4,8 +4,6 @@ from aiogram.filters import CommandStart, CommandObject, Command
 from refferal.refferal_logic import safe_add_referral
 from aiogram.types import Message
 from handlers import keyboard_handler
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
 from status.status_keys import get_message_by_status
 from db.db_inject import db_manager
 import asyncio
@@ -67,7 +65,7 @@ async def main():
 
     asyncio.create_task(check_and_send_subscription_reminders(bot))
     dp.include_router(keyboard_handler.router)
-    
+
     await dp.start_polling(bot)
 
 

@@ -114,3 +114,4 @@ class MarzbanBackendContext:
             else:
                 logger.warning(f"Ошибка изменения пользователя: {response.status}")
         return None # type: ignore
+

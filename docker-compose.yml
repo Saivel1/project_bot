@@ -1,0 +1,61 @@
+# docker-compose.yml
+version: '3.3'
+
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: vpn-bot-postgres
+restart: unless-stopped
+    environment:
+      POSTGRES_DB: vpn_bot_db
+      POSTGRES_USER: vpn_bot_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - vpn-bot-network
+
+  # Redis для кэширования
+  redis:
+    image: redis:7-alpine
+    container_name: vpn-bot-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no --stop-writes-on-bgsave-error no
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vpn-bot-network
+
+  # Telegram Bot
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vpn-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    working_dir: /app
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - vpn-bot-network
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - DB_HOST=postgres
+      - REDIS_URL=redis://redis:6379
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  vpn-bot-network:
+    driver: bridge
