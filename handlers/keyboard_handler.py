@@ -18,6 +18,10 @@ from redis_bot.redis_main import RedisUserCache, get_user_cache_from_redis, upda
 from aiogram.filters import CommandStart, CommandObject, Command
 from typing import Dict, Any
 import time
+from keyboards.vpn_keyboards import VPNInstallKeyboards
+from status.admin_midll import AdminMiddleware
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
@@ -35,14 +39,369 @@ redis_cache = RedisUserCache()
 config = load_config('.env')
 bot_token = config.tg_bot.token
 BOT_TOKEN = bot_token
+ADMIN_IDS = [482410857]
 
 # Создаем объекты бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 router = Router()
+admin_router = Router()
 
 #####################################
 # Вспомогательные функции
 #####################################
+admin_router.message.middleware(AdminMiddleware(ADMIN_IDS))
+admin_router.callback_query.middleware(AdminMiddleware(ADMIN_IDS))
+
+
+# ==============================
+# Админ команды
+# ==============================
+
+class AdminBalanceStates(StatesGroup):
+    waiting_for_user_id = State()
+    waiting_for_balance = State()
+
+@admin_router.message(Command("add_balance"))
+async def start_add_balance(message: Message, state: FSMContext):
+    """Начать процесс начисления баланса"""
+    await state.set_state(AdminBalanceStates.waiting_for_user_id)
+    await message.answer("""💳 Начисление баланса пользователю
+
+📝 Отправьте ID пользователя:
+Пример: 123456789
+
+❌ Для отмены напишите /cancel""")
+
+@admin_router.message(AdminBalanceStates.waiting_for_user_id)
+async def process_user_id(message: Message, state: FSMContext):
+    """Обработка ID пользователя"""
+    try:
+        # Проверяем, что введен корректный ID
+        user_id = int(message.text.strip())
+
+        # Проверяем существование пользователя в БД
+        user_data = await db.get_user(user_id)
+
+        if not user_data:
+            await message.answer(f"❌ Пользователь с ID {user_id} не найден в базе данных.")
+            await state.clear()
+            return
+
+        # Сохраняем ID в состояние
+        await state.update_data(target_user_id=user_id)
+        await state.set_state(AdminBalanceStates.waiting_for_balance)
+
+        # Показываем информацию о пользователе
+        current_balance = user_data.balance or 0
+        sub_end = user_data.subscription_end
+        current_date = int(datetime.timestamp(datetime.now()))
+
+        if sub_end and sub_end > current_date:
+            days_left = (sub_end - current_date) // 86400
+            status = f"✅ Активна ({days_left} дн.)"
+        else:
+            status = "❌ Неактивна"
+
+        await message.answer(f"""👤 Пользователь найден!
+
+🆔 ID: {user_id}
+💰 Текущий баланс: {current_balance} ₽
+📅 Подписка: {status}
+
+💳 Введите сумму для начисления (в рублях):
+Пример: 100
+
+❌ Для отмены напишите /cancel""")
+
+    except ValueError:
+        await message.answer("❌ Некорректный ID пользователя. Введите только числа.")
+    except Exception as e:
+        logging.error(f"Ошибка при проверке пользователя: {e}")
+        await message.answer("❌ Ошибка при проверке пользователя. Попробуйте позже.")
+        await state.clear()
+
+@admin_router.message(AdminBalanceStates.waiting_for_balance)
+async def process_balance_amount(message: Message, state: FSMContext, redis_cache: RedisUserCache):
+    """Обработка суммы для начисления"""
+    try:
+        # Получаем сумму
+        balance_amount = int(message.text.strip())
+
+        if balance_amount <= 0:
+            await message.answer("❌ Сумма должна быть положительной. Введите корректную сумму:")
+            return
+
+        # Получаем данные из состояния
+        state_data = await state.get_data()
+        target_user_id = state_data['target_user_id']
+
+        await message.answer("💸 Начисляем баланс...")
+
+        # Получаем актуальные данные пользователя
+        user_data = await db.get_user(target_user_id)
+        if not user_data:
+            await message.answer("❌ Пользователь больше не найден в базе данных.")
+            await state.clear()
+            return
+
+        # Вычисляем новый баланс
+        old_balance = user_data.balance or 0
+        new_balance = old_balance + balance_amount
+
+        # Вычисляем продление подписки (1 руб = 1 день в нашем примере)
+        # Или используйте свою логику расчета дней
+        days_to_add = balance_amount // 50 * 30 # Можете изменить формулу
+        days_to_add = int(days_to_add)
+
+        current_date = int(datetime.timestamp(datetime.now()))
+
+        # Определяем новую дату окончания подписки
+        if user_data.subscription_end and user_data.subscription_end > current_date:
+            # Если подписка активна - добавляем к текущей дате окончания
+            new_subscription_end = user_data.subscription_end + (days_to_add * 86400)
+        else:
+            # Если подписка неактивна - добавляем к текущей дате
+            new_subscription_end = current_date + (days_to_add * 86400)
+
+        # Операция с Marzban
+        new_link, marzban_success = await safe_marzban_operation(
+            str(target_user_id),
+            {'expire': new_subscription_end},
+            "admin_balance_addition"
+        )
+
+        if not marzban_success:
+            await message.answer("❌ Ошибка обновления в системе VPN. Баланс не начислен.")
+            await state.clear()
+            return
+
+        # Обновляем БД
+        updated_user = await update_db(
+            user_data,
+            balance=new_balance,
+            subscription_end=new_subscription_end,
+            link=new_link if new_link else user_data.link
+        )
+
+        # Обновляем кэш
+        await update_cache_fix(redis_cache, target_user_id, updated_user)
+
+        # Логируем действие админа
+        admin_id = message.from_user.id
+        admin_username = message.from_user.username or "Unknown"
+        logging.info(f"Админ {admin_id} (@{admin_username}) начислил {balance_amount}₽ пользователю {target_user_id}")
+
+        # Уведомление о успехе
+        days_added = days_to_add
+        new_end_date = datetime.fromtimestamp(new_subscription_end).strftime('%d.%m.%Y %H:%M')
+
+        success_text = f"""✅ Баланс успешно начислен!
+
+👤 Пользователь: {target_user_id}
+💰 Начислено: +{balance_amount} ₽
+💳 Новый баланс: {new_balance} ₽
+📅 Добавлено дней: +{days_added}
+⏰ Подписка до: {new_end_date}
+
+📝 Операция выполнена администратором {admin_username}"""
+
+        await message.answer(success_text)
+
+        # Опционально: уведомить пользователя
+        try:
+            await bot.send_message(
+                target_user_id,
+                f"""🎉 Вам начислен баланс!
+
+💰 Начислено: +{balance_amount} ₽
+📅 Подписка продлена на {days_added} дней
+⏰ Действует до: {new_end_date}
+
+Спасибо за использование нашего сервиса! 🔥"""
+            )
+        except Exception as e:
+            logging.warning(f"Не удалось уведомить пользователя {target_user_id}: {e}")
+            await message.answer("ℹ️ Пользователь не получил уведомление (заблокировал бота)")
+
+        await state.clear()
+
+    except ValueError:
+        await message.answer("❌ Некорректная сумма. Введите только числа:")
+    except Exception as e:
+        logging.error(f"Ошибка начисления баланса: {e}")
+        await message.answer("❌ Ошибка при начислении баланса. Попробуйте позже.")
+        await state.clear()
+
+@admin_router.message(Command("cancel"))
+async def cancel_admin_operation(message: Message, state: FSMContext):
+    """Отмена админской операции"""
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
+        await message.answer("❌ Операция отменена.")
+    else:
+        await message.answer("ℹ️ Нет активных операций для отмены.")
+
+# Дополнительная команда для быстрого начисления в одну строку
+@admin_router.message(Command("quick_balance"))
+async def quick_add_balance(message: Message, redis_cache: RedisUserCache):
+    """Быстрое начисление баланса: /quick_balance USER_ID AMOUNT"""
+    try:
+        args = message.text.split()
+        if len(args) != 3:
+            await message.answer("""❌ Неверный формат команды!
+
+Использование: /quick_balance USER_ID AMOUNT
+
+Пример: /quick_balance 123456789 100""")
+            return
+
+        user_id = int(args[1])
+        balance_amount = int(args[2])
+
+        if balance_amount <= 0:
+            await message.answer("❌ Сумма должна быть положительной.")
+            return
+
+        # Проверяем пользователя
+        user_data = await db.get_user(user_id)
+        if not user_data:
+            await message.answer(f"❌ Пользователь {user_id} не найден.")
+            return
+
+        await message.answer("💸 Начисляем баланс...")
+
+        # Тот же код начисления что и выше...
+        old_balance = user_data.balance or 0
+        new_balance = old_balance + balance_amount
+        days_to_add = balance_amount
+
+        current_date = int(datetime.timestamp(datetime.now()))
+        if user_data.subscription_end and user_data.subscription_end > current_date:
+            new_subscription_end = user_data.subscription_end + (days_to_add * 86400)
+        else:
+            new_subscription_end = current_date + (days_to_add * 86400)
+
+        new_link, marzban_success = await safe_marzban_operation(
+            str(user_id),
+            {'expire': new_subscription_end},
+            "admin_quick_balance"
+        )
+
+        if not marzban_success:
+            await message.answer("❌ Ошибка обновления в системе VPN.")
+            return
+
+        updated_user = await update_db(
+            user_data,
+            balance=new_balance,
+            subscription_end=new_subscription_end,
+            link=new_link if new_link else user_data.link
+        )
+
+        await update_cache_fix(redis_cache, user_id, updated_user)
+
+        await message.answer(f"✅ Начислено {balance_amount}₽ пользователю {user_id}. Подписка продлена на {days_to_add} дней.")
+
+    except ValueError:
+        await message.answer("❌ Некорректные данные. Проверьте формат команды.")
+    except Exception as e:
+        logging.error(f"Ошибка быстрого начисления: {e}")
+        await message.answer("❌ Ошибка операции.")
+
+# ==============================
+# Админ команды
+# ==============================
+
+#================================
+# Платформа
+#================================
+
+# Платформы для установки
+PLATFORM = ['android', 'ios', 'windows']
+
+# Инструкции для платформ
+PLATFORM_INSTRUCTIONS = {
+    'android': """🤖 Инструкция для Android:
+
+📱 Шаг 1: [Скачайте приложение](https://telegra.ph/Instrukciya-dlya-Android-03-07-2)
+
+🔑 Шаг 2: Активация
+• Откройте приложение
+• Скопируйте ваш ключ доступа (В самом низу)
+• Вставьте ключ в приложение
+(Вставить из буфера обмена или В правом верхнем углу кнопка '+' > Вставить из буфера обмена)
+
+⚡ Шаг 3: Подключение
+• Нажмите большую кнопку или Треугольник справа снизу
+• Разрешите создание VPN-подключения
+• Дождитесь подключения (3-5 секунд)
+
+✅ Готово! VPN активирован и защищает ваше соединение.
+
+❓ Возникли проблемы? Нажмите "Помощь" ниже.""",
+    'ios': """🍎 Инструкция для iOS/MacOS:
+
+📱 Шаг 1: [Скачайте приложение](https://telegra.ph/Instrukciya-dlya-MacOS--IOS-03-07)
+
+🔑 Шаг 2: Активация
+• Откройте приложение
+• Скопируйте ваш ключ доступа (В самом низу)
+• Вставьте ключ в приложение
+(Вставить из буфера обмена или В правом верхнем углу кнопка '+' > Вставить из буфера обмена)
+
+⚙️ Шаг 3: Настройка
+• Разрешите добавить VPN-конфигурацию
+• Введите пароль/Touch ID/Face ID
+• Подтвердите установку профиля
+
+⚡ Шаг 4: Подключение
+• Нажмите большую кнопку или Треугольник справа снизу
+• Нажмите "Подключиться"
+• Дождитесь подключения (3-5 секунд)
+
+✅ Готово! VPN активирован. В статус-баре появится значок VPN.
+
+❓ Возникли проблемы? Нажмите "Помощь" ниже.""",
+    'windows': """💻 Инструкция для Windows:
+
+💻 Шаг 1: [Скачайте приложение](https://telegra.ph/Instrukciya-dlya-Windows-03-07-3)
+
+📥 Шаг 2: Установка
+• Следуйте инструкциям установщика
+• Выберите папку для установки
+• Дождитесь завершения установки
+• Запустите приложение
+
+🔑 Шаг 2: Активация
+• Откройте приложение
+• Скопируйте ваш ключ доступа (В самом низу)
+• Вставьте ключ в приложение
+(Правой кнопкой мыши в свободном поле 'Вставить из буфера обмена' или в Happ сразу вставить ключ)
+
+⚡ Шаг 4: Подключение
+• Нажмите кнопку "Подключиться"
+• При первом запуске разрешите изменения
+• Дождитесь подключения (3-5 секунд)
+
+✅ Готово! VPN активирован. В трее появится иконка приложения.
+
+❓ Возникли проблемы? Нажмите "Помощь" ниже."""
+}
+
+def get_platform_message(platform: str) -> dict:
+    """Возвращает инструкцию для конкретной платформы"""
+    return {
+        'text': PLATFORM_INSTRUCTIONS.get(platform, '❌ Платформа не найдена'),
+        'keyboard': VPNInstallKeyboards.platform_chosen()
+    }
+
+
+
+
+#================================
+# Окончание
+#================================
 
 async def update_cache_fix(redis_cache: RedisUserCache, user_id: int, data: Dict[str, Any], **kwargs):
    """Обновляет кэш пользователя с данными из БД и дополнительными параметрами"""
@@ -298,7 +657,7 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        await db.log_user_action(user_id, callback.data)
 
        await callback.message.edit_text(
-           text=f'{text_message} \n\n Ссылка на подписку: `{link}`',
+           text=f'{text_message} \n\n 🔗 Ссылка на подписку: **`{link}`**',
            reply_markup=keyboard,
            parse_mode='Markdown'
        )
@@ -327,7 +686,7 @@ async def start_menu_in_payment(callback: CallbackQuery, redis_cache: RedisUserC
    except Exception as e:
        logging.error(f"Ошибка возврата в главное меню для пользователя {user_id}: {e}")
 
-@router.callback_query(F.data.in_(["to_pay_year", "to_pay_6_months", "to_pay_3_months", "to_pay_month"]))
+@router.callback_query(F.data.in_(["to_pay_year", "to_pay_6_months", "to_pay_3_months", "to_pay_month", "to_pay_best"]))
 async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUserCache):
    user_id = callback.from_user.id
    username = callback.from_user.username
@@ -339,7 +698,8 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
            "to_pay_year": 360,
            "to_pay_6_months": 180,
            "to_pay_3_months": 90,
-           "to_pay_month": 30
+           "to_pay_month": 30,
+           "to_pay_best": 100
        }
 
        if callback.data not in plan:
@@ -359,16 +719,22 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
            "connection_check"
        )
 
+       cnt = plan[callback.data]
+       if callback.data == 'to_pay_best':
+           monthes = 120
+       else:
+           monthes = plan[callback.data]
+
        if marzban_available:
-           prices = [LabeledPrice(label="Оплата", amount=plan[callback.data])]
+           prices = [LabeledPrice(label="Оплата", amount=cnt)]
            await callback.message.answer_invoice(
-               title=f"💫 Подписка на {plan[callback.data] // 30} мес.",
+               title=f"💫 Подписка на {monthes // 30} мес.",
                description=f'Для оформления подписки необходимо произвести оплату.',
                payload=callback.data,
                currency="XTR",
                prices=prices,
                start_parameter="premium_payment",
-               reply_markup=help_message(plan[callback.data])
+               reply_markup=help_message(cnt)
            )
        else:
            message = get_message_by_status("payment_unsuccess", user_data.trial, user_data.subscription_end, user_data.balance)
@@ -400,7 +766,8 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
            "to_pay_year": 600,
            "to_pay_6_months": 300,
            "to_pay_3_months": 150,
-           "to_pay_month": 50
+           "to_pay_month": 50,
+           "to_pay_best": 180
        }
 
        if invoice not in plan:
@@ -409,6 +776,11 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
            return
 
        amount = plan[invoice]
+
+       if invoice == "to_pay_best":
+           amount_time = 200
+       else:
+           amount_time = plan[invoice]
 
        # Логируем платеж
        await db.create_payment(user_id, amount, "success", charge_id)
@@ -419,11 +791,11 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
        new_balance = user_data.balance + amount
 
        if current_date > user_data.subscription_end:
-           new_date = current_date + (amount * 86400 * 30) // 50
+           new_date = current_date + (amount_time * 86400 * 30) // 50
             # Для теста поставим пол дня или несколько часов
            #new_date = current_date + (amount * 3600 * 6) // 50
        else:
-           new_date = user_data.subscription_end + (amount * 86400 * 30) // 50
+           new_date = user_data.subscription_end + (amount_time * 86400 * 30) // 50
            #new_date = user_data.subscription_end + (amount * 3600 * 6) // 50
 
        if not validate_positive_int(new_date, "subscription_end_date"):
@@ -502,6 +874,28 @@ async def invite_handler(callback: CallbackQuery, redis_cache: RedisUserCache):
    except Exception as e:
        logging.error(f"Ошибка в invite_handler для пользователя {user_id}: {e}")
 
+@router.callback_query(F.data.in_(PLATFORM))
+async def platform_handler(callback: CallbackQuery, redis_cache: RedisUserCache):
+   user_id = callback.from_user.id
+   username = callback.from_user.username
+
+   try:
+       user_data = await always_cache(redis_cache, user_id, username)
+       message = get_platform_message(callback.data)
+       sub_link = user_data.link
+
+       await db.log_user_action(user_id, callback.data)
+
+       await callback.message.edit_text(
+          text=f"{message['text']}\n\n🔗 Ссылка на подписку: **`{sub_link}`**",
+          reply_markup=message['keyboard'],
+          parse_mode='Markdown'
+        )
+   except Exception as e:
+       logging.error(f"Ошибка в invite_handler для пользователя {user_id}: {e}")
+
+
+
 @router.callback_query()
 async def universal_handler(callback: CallbackQuery, redis_cache: RedisUserCache):
    user_id = callback.from_user.id
@@ -522,7 +916,8 @@ async def universal_handler(callback: CallbackQuery, redis_cache: RedisUserCache
        message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
        await callback.message.edit_text(
            text=message['text'],
-           reply_markup=message['keyboard']
+           reply_markup=message['keyboard'],
+           parse_mode='Markdown'
        )
    except Exception as e:
        logging.error(f"Ошибка в universal_handler для пользователя {user_id}: {e}")

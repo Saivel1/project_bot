@@ -36,6 +36,7 @@ class VPNPersAccKeyboards:
     @staticmethod
     def choose_plan_menu_new(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌟 4 мес. | 100 звёзд", callback_data="to_pay_best")],
             [InlineKeyboardButton(text="📅 1 мес. | 50 руб.", callback_data="to_pay_month")],
             [InlineKeyboardButton(text="📅 3 мес. | 150 руб.", callback_data="to_pay_3_months")],
             [InlineKeyboardButton(text="📅 6 мес. | 300 руб.", callback_data="to_pay_6_months")],
@@ -49,6 +50,7 @@ class VPNPersAccKeyboards:
     @staticmethod
     def choose_plan_menu(back_target: str):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌟 4 мес. | 100 звёзд", callback_data="to_pay_best")],
             [InlineKeyboardButton(text="📅 1 мес. | 50 руб.", callback_data="to_pay_month")],
             [InlineKeyboardButton(text="📅 3 мес. | 150 руб.", callback_data="to_pay_3_months")],
             [InlineKeyboardButton(text="📅 6 мес. | 300 руб.", callback_data="to_pay_6_months")],

@@ -1,14 +1,8 @@
-from config_data.config import load_config, load_config_db
+from config_data.config import load_config
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart, CommandObject, Command
-from refferal.refferal_logic import safe_add_referral
-from aiogram.types import Message
 from handlers import keyboard_handler
-from status.status_keys import get_message_by_status
 from db.db_inject import db_manager
 import asyncio
-import logging
-from dataclasses import asdict
 from redis_bot.redis_main import RedisUserCache
 from redis_bot.redis_middleware import RedisMiddleware
 from status.block_middleware import UserBlockedMiddleware, UserUnblockedMiddleware
@@ -65,6 +59,7 @@ async def main():
 
     asyncio.create_task(check_and_send_subscription_reminders(bot))
     dp.include_router(keyboard_handler.router)
+    dp.include_router(keyboard_handler.admin_router)
 
     await dp.start_polling(bot)
 

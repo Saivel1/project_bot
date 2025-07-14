@@ -41,9 +41,9 @@ class VPNInstallKeyboards:
         """Клавиатура выбора платформы"""
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="🤖 Android", callback_data="android"),
-                InlineKeyboardButton(text="🍎 iOS | MacOS", callback_data="ios"),
-                InlineKeyboardButton(text="🪟 Windows", callback_data="windows"),
+                InlineKeyboardButton(text="🤖 Android   ", callback_data="android"),
+                InlineKeyboardButton(text="🍎 iOS/MacOS ", callback_data="ios"),
+                InlineKeyboardButton(text="💻 Windows   ", callback_data="windows"),
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"{back_target}")],
         ])
