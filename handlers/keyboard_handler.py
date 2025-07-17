@@ -529,6 +529,44 @@ def help_message(amount: int):
 # Хэндлеры
 #####################################
 
+@router.callback_query(F.data == 'help_turn_on')
+async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
+   user_id = callback.from_user.id
+   username = callback.from_user.username
+
+   try:
+       user_data = await always_cache(redis_cache, user_id, username)
+       message =  get_message_by_status('help_to_me', user_data.trial, user_data.subscription_end, user_data.balance)
+       link_code = user_data.link
+
+       await db.log_user_action(user_id, callback.data)
+
+       await callback.message.edit_text(
+           text="Загружаем ссылку..."
+       )
+
+       try:
+           async with MarzbanBackendContext() as backend:
+             res = await backend.get_user(user_id)
+             if res:
+                 link_code = res['links'][0]
+
+             logging.info(f"Marzban операция успешна для пользователя {user_id}")
+       except Exception as e:
+         logging.error(f"Ошибка Marzban операции для пользователя {user_id}: {e}")
+         await callback.message.edit_text(
+             text='Сервис временно недоступен, попробуйте позже.'
+         )
+
+       await callback.message.edit_text(
+          text=f"👇Код ниже, нужно скопировать и добавить из буфера обмена. \n\n 1️⃣ В правом верхнем углу ➕ \n 2️⃣ Вставить из буфера обмена \n\n 🔗Ваш код(нажмите для копирования): \n `{link_code}`",
+          reply_markup=message['keyboard'],
+          parse_mode='Markdown'
+        )
+   except Exception as e:
+       logging.error(f"Ошибка в turn_on_code для пользователя {user_id}: {e}")
+
+
 @router.callback_query(F.data == 'trial_per')
 async def trial_per(callback: CallbackQuery, redis_cache: RedisUserCache):
    current_date = int(datetime.timestamp(datetime.now()))

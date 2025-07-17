@@ -10,6 +10,9 @@ MARZBAN_API_URL = config.url
 MARZBAN_USER = config.login
 MARZBAN_PASSWORD = config.password
 
+
+
+
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
 logging.basicConfig(level=logging.WARNING, format=format)
@@ -114,4 +117,3 @@ class MarzbanBackendContext:
             else:
                 logger.warning(f"Ошибка изменения пользователя: {response.status}")
         return None # type: ignore
-
