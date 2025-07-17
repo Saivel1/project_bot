@@ -1,4 +1,3 @@
-GNU nano 4.8                                                                                      Dockerfile
 # Dockerfile
 FROM python:3.11-slim
 

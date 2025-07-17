@@ -657,7 +657,7 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        await db.log_user_action(user_id, callback.data)
 
        await callback.message.edit_text(
-           text=f'{text_message} \n\n 🔗 Ссылка на подписку: **`{link}`**',
+           text=f'{text_message} \n\n 🔗 Ссылка на подписку: \n **`{link}`**',
            reply_markup=keyboard,
            parse_mode='Markdown'
        )
