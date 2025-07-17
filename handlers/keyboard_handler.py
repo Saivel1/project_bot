@@ -53,266 +53,6 @@ admin_router.message.middleware(AdminMiddleware(ADMIN_IDS))
 admin_router.callback_query.middleware(AdminMiddleware(ADMIN_IDS))
 
 
-# ==============================
-# Админ команды
-# ==============================
-
-class AdminBalanceStates(StatesGroup):
-    waiting_for_user_id = State()
-    waiting_for_balance = State()
-
-@admin_router.message(Command("add_balance"))
-async def start_add_balance(message: Message, state: FSMContext):
-    """Начать процесс начисления баланса"""
-    await state.set_state(AdminBalanceStates.waiting_for_user_id)
-    await message.answer("""💳 Начисление баланса пользователю
-
-📝 Отправьте ID пользователя:
-Пример: 123456789
-
-❌ Для отмены напишите /cancel""")
-
-@admin_router.message(AdminBalanceStates.waiting_for_user_id)
-async def process_user_id(message: Message, state: FSMContext):
-    """Обработка ID пользователя"""
-    try:
-        # Проверяем, что введен корректный ID
-        user_id = int(message.text.strip())
-
-        # Проверяем существование пользователя в БД
-        user_data = await db.get_user(user_id)
-
-        if not user_data:
-            await message.answer(f"❌ Пользователь с ID {user_id} не найден в базе данных.")
-            await state.clear()
-            return
-
-        # Сохраняем ID в состояние
-        await state.update_data(target_user_id=user_id)
-        await state.set_state(AdminBalanceStates.waiting_for_balance)
-
-        # Показываем информацию о пользователе
-        current_balance = user_data.balance or 0
-        sub_end = user_data.subscription_end
-        current_date = int(datetime.timestamp(datetime.now()))
-
-        if sub_end and sub_end > current_date:
-            days_left = (sub_end - current_date) // 86400
-            status = f"✅ Активна ({days_left} дн.)"
-        else:
-            status = "❌ Неактивна"
-
-        await message.answer(f"""👤 Пользователь найден!
-
-🆔 ID: {user_id}
-💰 Текущий баланс: {current_balance} ₽
-📅 Подписка: {status}
-
-💳 Введите сумму для начисления (в рублях):
-Пример: 100
-
-❌ Для отмены напишите /cancel""")
-
-    except ValueError:
-        await message.answer("❌ Некорректный ID пользователя. Введите только числа.")
-    except Exception as e:
-        logging.error(f"Ошибка при проверке пользователя: {e}")
-        await message.answer("❌ Ошибка при проверке пользователя. Попробуйте позже.")
-        await state.clear()
-
-@admin_router.message(AdminBalanceStates.waiting_for_balance)
-async def process_balance_amount(message: Message, state: FSMContext, redis_cache: RedisUserCache):
-    """Обработка суммы для начисления"""
-    try:
-        # Получаем сумму
-        balance_amount = int(message.text.strip())
-
-        if balance_amount <= 0:
-            await message.answer("❌ Сумма должна быть положительной. Введите корректную сумму:")
-            return
-
-        # Получаем данные из состояния
-        state_data = await state.get_data()
-        target_user_id = state_data['target_user_id']
-
-        await message.answer("💸 Начисляем баланс...")
-
-        # Получаем актуальные данные пользователя
-        user_data = await db.get_user(target_user_id)
-        if not user_data:
-            await message.answer("❌ Пользователь больше не найден в базе данных.")
-            await state.clear()
-            return
-
-        # Вычисляем новый баланс
-        old_balance = user_data.balance or 0
-        new_balance = old_balance + balance_amount
-
-        # Вычисляем продление подписки (1 руб = 1 день в нашем примере)
-        # Или используйте свою логику расчета дней
-        days_to_add = balance_amount // 50 * 30 # Можете изменить формулу
-        days_to_add = int(days_to_add)
-
-        current_date = int(datetime.timestamp(datetime.now()))
-
-        # Определяем новую дату окончания подписки
-        if user_data.subscription_end and user_data.subscription_end > current_date:
-            # Если подписка активна - добавляем к текущей дате окончания
-            new_subscription_end = user_data.subscription_end + (days_to_add * 86400)
-        else:
-            # Если подписка неактивна - добавляем к текущей дате
-            new_subscription_end = current_date + (days_to_add * 86400)
-
-        # Операция с Marzban
-        new_link, marzban_success = await safe_marzban_operation(
-            str(target_user_id),
-            {'expire': new_subscription_end},
-            "admin_balance_addition"
-        )
-
-        if not marzban_success:
-            await message.answer("❌ Ошибка обновления в системе VPN. Баланс не начислен.")
-            await state.clear()
-            return
-
-        # Обновляем БД
-        updated_user = await update_db(
-            user_data,
-            balance=new_balance,
-            subscription_end=new_subscription_end,
-            link=new_link if new_link else user_data.link
-        )
-
-        # Обновляем кэш
-        await update_cache_fix(redis_cache, target_user_id, updated_user)
-
-        # Логируем действие админа
-        admin_id = message.from_user.id
-        admin_username = message.from_user.username or "Unknown"
-        logging.info(f"Админ {admin_id} (@{admin_username}) начислил {balance_amount}₽ пользователю {target_user_id}")
-
-        # Уведомление о успехе
-        days_added = days_to_add
-        new_end_date = datetime.fromtimestamp(new_subscription_end).strftime('%d.%m.%Y %H:%M')
-
-        success_text = f"""✅ Баланс успешно начислен!
-
-👤 Пользователь: {target_user_id}
-💰 Начислено: +{balance_amount} ₽
-💳 Новый баланс: {new_balance} ₽
-📅 Добавлено дней: +{days_added}
-⏰ Подписка до: {new_end_date}
-
-📝 Операция выполнена администратором {admin_username}"""
-
-        await message.answer(success_text)
-
-        # Опционально: уведомить пользователя
-        try:
-            await bot.send_message(
-                target_user_id,
-                f"""🎉 Вам начислен баланс!
-
-💰 Начислено: +{balance_amount} ₽
-📅 Подписка продлена на {days_added} дней
-⏰ Действует до: {new_end_date}
-
-Спасибо за использование нашего сервиса! 🔥"""
-            )
-        except Exception as e:
-            logging.warning(f"Не удалось уведомить пользователя {target_user_id}: {e}")
-            await message.answer("ℹ️ Пользователь не получил уведомление (заблокировал бота)")
-
-        await state.clear()
-
-    except ValueError:
-        await message.answer("❌ Некорректная сумма. Введите только числа:")
-    except Exception as e:
-        logging.error(f"Ошибка начисления баланса: {e}")
-        await message.answer("❌ Ошибка при начислении баланса. Попробуйте позже.")
-        await state.clear()
-
-@admin_router.message(Command("cancel"))
-async def cancel_admin_operation(message: Message, state: FSMContext):
-    """Отмена админской операции"""
-    current_state = await state.get_state()
-    if current_state:
-        await state.clear()
-        await message.answer("❌ Операция отменена.")
-    else:
-        await message.answer("ℹ️ Нет активных операций для отмены.")
-
-# Дополнительная команда для быстрого начисления в одну строку
-@admin_router.message(Command("quick_balance"))
-async def quick_add_balance(message: Message, redis_cache: RedisUserCache):
-    """Быстрое начисление баланса: /quick_balance USER_ID AMOUNT"""
-    try:
-        args = message.text.split()
-        if len(args) != 3:
-            await message.answer("""❌ Неверный формат команды!
-
-Использование: /quick_balance USER_ID AMOUNT
-
-Пример: /quick_balance 123456789 100""")
-            return
-
-        user_id = int(args[1])
-        balance_amount = int(args[2])
-
-        if balance_amount <= 0:
-            await message.answer("❌ Сумма должна быть положительной.")
-            return
-
-        # Проверяем пользователя
-        user_data = await db.get_user(user_id)
-        if not user_data:
-            await message.answer(f"❌ Пользователь {user_id} не найден.")
-            return
-
-        await message.answer("💸 Начисляем баланс...")
-
-        # Тот же код начисления что и выше...
-        old_balance = user_data.balance or 0
-        new_balance = old_balance + balance_amount
-        days_to_add = balance_amount
-
-        current_date = int(datetime.timestamp(datetime.now()))
-        if user_data.subscription_end and user_data.subscription_end > current_date:
-            new_subscription_end = user_data.subscription_end + (days_to_add * 86400)
-        else:
-            new_subscription_end = current_date + (days_to_add * 86400)
-
-        new_link, marzban_success = await safe_marzban_operation(
-            str(user_id),
-            {'expire': new_subscription_end},
-            "admin_quick_balance"
-        )
-
-        if not marzban_success:
-            await message.answer("❌ Ошибка обновления в системе VPN.")
-            return
-
-        updated_user = await update_db(
-            user_data,
-            balance=new_balance,
-            subscription_end=new_subscription_end,
-            link=new_link if new_link else user_data.link
-        )
-
-        await update_cache_fix(redis_cache, user_id, updated_user)
-
-        await message.answer(f"✅ Начислено {balance_amount}₽ пользователю {user_id}. Подписка продлена на {days_to_add} дней.")
-
-    except ValueError:
-        await message.answer("❌ Некорректные данные. Проверьте формат команды.")
-    except Exception as e:
-        logging.error(f"Ошибка быстрого начисления: {e}")
-        await message.answer("❌ Ошибка операции.")
-
-# ==============================
-# Админ команды
-# ==============================
-
 #================================
 # Платформа
 #================================
@@ -489,6 +229,274 @@ def validate_positive_int(value: int, name: str) -> bool:
        logging.warning(f"Некорректное значение {name}: {value}")
        return False
    return True
+
+
+# ==============================
+# Админ команды
+# ==============================
+
+# Функция проверки подключения к Marzban (используем вашу safe_marzban_operation)
+async def check_marzban_connection() -> bool:
+    """Проверка подключения к панели Marzban"""
+    try:
+        async with MarzbanBackendContext() as backend:
+            # Простая проверка авторизации
+            await backend.authorize()
+            logging.info("✅ Подключение к Marzban панели успешно")
+            return True
+    except Exception as e:
+        logging.error(f"❌ Ошибка подключения к Marzban: {e}")
+        return False
+
+# FSM состояния
+class AdminBalanceStates(StatesGroup):
+    waiting_for_user_id = State()
+    waiting_for_balance = State()
+    waiting_for_charge_id = State()
+
+@admin_router.message(Command("add_balance"))
+async def start_add_balance(message: Message, state: FSMContext):
+    """Начать процесс начисления баланса"""
+
+    # Проверяем подключение к Marzban
+    await message.answer("🔍 Проверяем подключение к VPN панели...")
+
+    if not await check_marzban_connection():
+        await message.answer("""❌ Ошибка подключения к VPN панели!
+
+🔧 VPN панель недоступна. Начисление баланса невозможно.
+Попробуйте позже или обратитесь к техническому специалисту.""")
+        return
+
+    await state.set_state(AdminBalanceStates.waiting_for_user_id)
+    await message.answer("""✅ Подключение к VPN панели успешно!
+
+💳 Начисление баланса пользователю
+
+📝 Отправьте ID пользователя:
+Пример: 123456789
+
+❌ Для отмены напишите /cancel""")
+
+@admin_router.message(AdminBalanceStates.waiting_for_user_id)
+async def process_user_id(message: Message, state: FSMContext):
+    """Обработка ID пользователя"""
+    try:
+        user_id = int(message.text.strip())
+        user_data = await db.get_user(user_id)
+
+        if not user_data:
+            await message.answer(f"❌ Пользователь с ID {user_id} не найден в базе данных.")
+            await state.clear()
+            return
+
+        await state.update_data(target_user_id=user_id)
+        await state.set_state(AdminBalanceStates.waiting_for_balance)
+
+        # Информация о пользователе
+        current_balance = user_data.balance or 0
+        sub_end = user_data.subscription_end
+        current_date = int(datetime.timestamp(datetime.now()))
+
+        if sub_end and sub_end > current_date:
+            days_left = (sub_end - current_date) // 86400
+            status = f"✅ Активна ({days_left} дн.)"
+        else:
+            status = "❌ Неактивна"
+
+        await message.answer(f"""👤 Пользователь найден!
+
+🆔 ID: {user_id}
+💰 Текущий баланс: {current_balance} ₽
+📅 Подписка: {status}
+
+💳 Введите сумму для начисления (в рублях):
+Пример: 100
+
+❌ Для отмены напишите /cancel""")
+
+    except ValueError:
+        await message.answer("❌ Некорректный ID пользователя. Введите только числа.")
+    except Exception as e:
+        logging.error(f"Ошибка при проверке пользователя: {e}")
+        await message.answer("❌ Ошибка при проверке пользователя. Попробуйте позже.")
+        await state.clear()
+
+@admin_router.message(AdminBalanceStates.waiting_for_balance)
+async def process_balance_amount(message: Message, state: FSMContext):
+    """Обработка суммы для начисления"""
+    try:
+        balance_amount = int(message.text.strip())
+
+        if balance_amount <= 0:
+            await message.answer("❌ Сумма должна быть положительной. Введите корректную сумму:")
+            return
+
+        await state.update_data(balance_amount=balance_amount)
+        await state.set_state(AdminBalanceStates.waiting_for_charge_id)
+
+        await message.answer(f"""💰 Сумма: {balance_amount} ₽
+
+🏷️ Введите тип платежа (charge_id):
+
+Примеры:
+• cache - наличка
+• sended_to_BANK - перевод на карту, банка
+
+📝 Введите тип платежа:""")
+
+    except ValueError:
+        await message.answer("❌ Некорректная сумма. Введите только числа:")
+    except Exception as e:
+        logging.error(f"Ошибка обработки суммы: {e}")
+        await message.answer("❌ Ошибка при обработке суммы. Попробуйте позже.")
+        await state.clear()
+
+@admin_router.message(AdminBalanceStates.waiting_for_charge_id)
+async def process_charge_id(message: Message, state: FSMContext, redis_cache: RedisUserCache):
+    """Обработка типа платежа и выполнение начисления"""
+    try:
+        charge_id = message.text.strip()
+
+        if not charge_id:
+            await message.answer("❌ Тип платежа не может быть пустым. Введите корректный тип:")
+            return
+
+        # Получаем данные из состояния
+        state_data = await state.get_data()
+        target_user_id = state_data['target_user_id']
+        balance_amount = state_data['balance_amount']
+
+        await message.answer("💸 Начисляем баланс...")
+
+        # Создаем запись о платеже (предполагаем успех)
+        payment_id = await db.create_payment(
+            user_id=target_user_id,
+            amount=balance_amount,
+            status="success",  # Сразу completed, так как предполагаем успех
+            charge_id=charge_id
+        )
+
+        if not payment_id:
+            await message.answer("❌ Ошибка создания записи о платеже")
+            await state.clear()
+            return
+
+        # Получаем актуальные данные пользователя
+        user_data = await db.get_user(target_user_id)
+        if not user_data:
+            await message.answer("❌ Пользователь больше не найден в базе данных.")
+            await state.clear()
+            return
+
+        # Вычисляем новый баланс и подписку
+        old_balance = user_data.balance or 0
+        new_balance = old_balance + balance_amount
+
+        # Вычисляем продление подписки (50₽ = 30 дней)
+        days_to_add = balance_amount // 50 * 30
+        days_to_add = int(days_to_add)
+
+        current_date = int(datetime.timestamp(datetime.now()))
+
+        # Определяем новую дату окончания подписки
+        if user_data.subscription_end and user_data.subscription_end > current_date:
+            new_subscription_end = user_data.subscription_end + (days_to_add * 86400)
+        else:
+            new_subscription_end = current_date + (days_to_add * 86400)
+
+        # Используем вашу функцию safe_marzban_operation
+        new_link, marzban_success = await safe_marzban_operation(
+            str(target_user_id),
+            {'expire': new_subscription_end},
+            f"admin_payment_{charge_id}"
+        )
+
+        if not marzban_success:
+            await message.answer("❌ Ошибка обновления в системе VPN. Операция не выполнена.")
+            await state.clear()
+            return
+
+        # Обновляем БД пользователя
+        updated_user = await update_db(
+            user_data,
+            balance=new_balance,
+            subscription_end=new_subscription_end,
+            link=new_link if new_link else user_data.link
+        )
+
+        # Обновляем кэш
+        await update_cache_fix(redis_cache, target_user_id, updated_user)
+
+        # Логируем действие админа
+        admin_id = message.from_user.id
+        admin_username = message.from_user.username or "Unknown"
+        logging.info(f"Админ {admin_id} (@{admin_username}) начислил {balance_amount}₽ пользователю {target_user_id}, charge_id: {charge_id}, payment_id: {payment_id}")
+
+        # Уведомление о успехе
+        new_end_date = datetime.fromtimestamp(new_subscription_end).strftime('%d.%m.%Y %H:%M')
+
+        success_text = f"""✅ Баланс успешно начислен!
+
+👤 Пользователь: {target_user_id}
+💰 Начислено: +{balance_amount} ₽
+💳 Новый баланс: {new_balance} ₽
+📅 Добавлено дней: +{days_to_add}
+⏰ Подписка до: {new_end_date}
+🏷️ Тип платежа: {charge_id}
+🆔 ID платежа: {payment_id}
+
+📝 Операция выполнена администратором @{admin_username}"""
+
+        await message.answer(success_text)
+
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                target_user_id,
+                f"""🎉 Вам начислен баланс!
+
+💰 Начислено: +{balance_amount} ₽
+📅 Подписка продлена на {days_to_add} дней
+⏰ Действует до: {new_end_date}
+
+Спасибо за использование нашего сервиса! 🔥"""
+            )
+        except Exception as e:
+            logging.warning(f"Не удалось уведомить пользователя {target_user_id}: {e}")
+            await message.answer("ℹ️ Пользователь не получил уведомление (заблокировал бота)")
+
+        await state.clear()
+
+    except Exception as e:
+        logging.error(f"Ошибка начисления баланса: {e}")
+        await message.answer("❌ Ошибка при начислении баланса. Попробуйте позже.")
+        await state.clear()
+
+@admin_router.message(Command("cancel"))
+async def cancel_admin_operation(message: Message, state: FSMContext):
+    """Отмена админской операции"""
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
+        await message.answer("❌ Операция отменена.")
+    else:
+        await message.answer("ℹ️ Нет активных операций для отмены.")
+
+# Дополнительная команда для проверки статуса Marzban
+@admin_router.message(Command("check_marzban"))
+async def check_marzban_status(message: Message):
+    """Проверка статуса подключения к Marzban"""
+    await message.answer("🔍 Проверяем подключение к VPN панели...")
+
+    if await check_marzban_connection():
+        await message.answer("✅ VPN панель доступна и работает корректно!")
+    else:
+        await message.answer("❌ VPN панель недоступна. Проверьте настройки подключения.")
+
+# ==============================
+# Админ команды
+# ==============================
 
 #####################################
 # Основные функции
