@@ -529,6 +529,46 @@ def help_message(amount: int):
 # Хэндлеры
 #####################################
 
+@router.callback_query(F.data == 'keys')
+async def keys_gen(callback: CallbackQuery, redis_cache: RedisUserCache):
+    user_id = callback.from_user.id
+    username = callback.from_user.username
+
+    try:
+        print("Тут")
+        async with MarzbanBackendContext() as backend:
+            res = await backend.get_user(str(user_id))
+            print(res)
+            link = res['subscription_url']
+            key1 = res['links'][0]
+            key2 = res['links'][1]
+
+        user_data = await always_cache(redis_cache, user_id, username)
+        message = get_message_by_status('help_to_me', user_data.trial, user_data.subscription_end, user_data.balance)
+
+        await callback.message.edit_text(
+            text=f"""
+🔗 Подписка:
+`{link}`
+
+🇦🇹Австрия ключ:
+`{key1}`
+
+🇩🇪Германия ключ:
+`{key2}`
+""",
+            reply_markup=message['keyboard'],
+            parse_mode='Markdown'
+        )
+
+    except Exception as e:
+        callback.message.edit_text(
+            text='❌ Ошибка загрузки ключей. Попробуйте позже.',
+            reply_markup=None
+        )
+        logging.error(f"Ошибка в turn_on_code для пользователя {user_id}: {e}")
+
+
 @router.callback_query(F.data == 'help_turn_on')
 async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
    user_id = callback.from_user.id
@@ -550,6 +590,7 @@ async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
              res = await backend.get_user(user_id)
              if res:
                  link_code = res['links'][0]
+                 link_code_germ = res['links'][1]
 
              logging.info(f"Marzban операция успешна для пользователя {user_id}")
        except Exception as e:
@@ -559,7 +600,7 @@ async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
          )
 
        await callback.message.edit_text(
-          text=f"👇Код ниже, нужно скопировать и добавить из буфера обмена. \n\n 1️⃣ В правом верхнем углу ➕ \n 2️⃣ Вставить из буфера обмена \n\n 🔗Ваш код(нажмите для копирования): \n `{link_code}`",
+               text=f"👇Код ниже, нужно скопировать и добавить из буфера обмена. \n\n 1️⃣ В правом верхнем углу ➕ \n 2️⃣ Вставить из буфера обмена \n\n 🔗Ваш код(нажмите для копирования): \nАвстрия: \n `{link_code}`\n\n Германия: \n `{link_code_germ}`",
           reply_markup=message['keyboard'],
           parse_mode='Markdown'
         )
@@ -693,7 +734,10 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
                    logging.error(f"Не удалось начислить реферальный бонус пользователю {user_id} - Marzban недоступен")
 
        text_message = create_personal_acc_text(user_data.balance, user_data.subscription_end)
-       link = user_data.link if user_data.link and (user_data.trial != 'never_used' or user_data.subscription_end) else "Пока пусто."
+       # Пока не работает австрия link = user_data.link if user_data.link and (user_data.trial != 'never_used' or user_data.subscription_end) else "Пока пусто."
+       async with MarzbanBackendContext() as backend:
+           link = await backend.get_user(str(user_id))
+           link = link['links'][1]
 
        if user_data.trial == 'never_used':
            keyboard = per_acc.VPNPersAccKeyboards.personal_acc_new()
@@ -756,7 +800,11 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
        await process_referral_bonus(user_id)
 
        await db.log_user_action(user_id, callback.data)
-       await callback.message.delete()
+       try:
+           await callback.message.delete()
+       except:
+           await callback.message.answer(
+                   text="Загружаем оплату...")
 
        # Проверяем доступность Marzban перед созданием инвойса
        _, marzban_available = await safe_marzban_operation(
@@ -772,6 +820,10 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
            monthes = plan[callback.data]
 
        if marzban_available:
+           try:
+               await callback.message.delete()
+           except:
+               logging.info(f'INFO')
            prices = [LabeledPrice(label="Оплата", amount=cnt)]
            await callback.message.answer_invoice(
                title=f"💫 Подписка на {monthes // 30} мес.",
