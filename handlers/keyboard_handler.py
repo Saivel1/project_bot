@@ -551,7 +551,7 @@ async def keys_gen(callback: CallbackQuery, redis_cache: RedisUserCache):
 🔗 Подписка:
 `{link}`
 
-🇦🇹Австрия ключ:
+🇨🇭Швейцария ключ:
 `{key1}`
 
 🇩🇪Германия ключ:
@@ -737,7 +737,7 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        # Пока не работает австрия link = user_data.link if user_data.link and (user_data.trial != 'never_used' or user_data.subscription_end) else "Пока пусто."
        async with MarzbanBackendContext() as backend:
            link = await backend.get_user(str(user_id))
-           link = link['links'][1]
+           link = link['links'][0]
 
        if user_data.trial == 'never_used':
            keyboard = per_acc.VPNPersAccKeyboards.personal_acc_new()
