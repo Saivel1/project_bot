@@ -3,7 +3,7 @@ import aiohttp
 import asyncio
 import json
 import logging
-from config_data.config import load_config_marz, load_config_marz_dig
+from config_data.config import load_config_marz, load_config_marz_dig, load_config_marz_mob
 
 config = load_config_marz('.env')
 MARZBAN_API_URL = config.url
@@ -14,6 +14,11 @@ config_dig = load_config_marz_dig('.env')
 MARZBAN_API_URL_DIGITAL = config_dig.url
 MARZBAN_USER_DIGITAL = config_dig.login
 MARZBAN_PASSWORD_DIGITAL = config_dig.password
+
+config_moba = load_config_marz_mob('.env')
+MARZBAN_API_URL_MOBA = config_moba.url
+MARZBAN_USER_MOBA = config_moba.login
+MARZBAN_PASSWORD_MOBA = config_moba.password
 
 
 logger = logging.getLogger(__name__)
@@ -144,6 +149,26 @@ class MarzbanDigital(MarzbanBackendContext):
         data = {
             "username": MARZBAN_USER_DIGITAL,
             "password": MARZBAN_PASSWORD_DIGITAL,
+        }
+
+        async with self.session.post(f"{self.base_url}/api/admin/token", data=data) as response: # type: ignore
+            if response.status == 200:
+                result = await response.json()
+                token = result.get("access_token")
+                self.headers["Authorization"] = f"Bearer {token}"
+            else:
+                logger.warning(f"Ошибка авторизации: {response.status}")
+
+
+class MarzbanMoba(MarzbanBackendContext):
+    def __init__(self):
+        super().__init__()
+        self.base_url = MARZBAN_API_URL_MOBA
+
+    async def authorize(self) -> None:
+        data = {
+            "username": MARZBAN_USER_MOBA,
+            "password": MARZBAN_PASSWORD_MOBA,
         }
 
         async with self.session.post(f"{self.base_url}/api/admin/token", data=data) as response: # type: ignore

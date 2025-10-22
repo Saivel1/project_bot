@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 from status.status_keys import get_message_by_status
 from datetime import datetime
-from marzban.Backend import MarzbanBackendContext, MarzbanDigital
+from marzban.Backend import MarzbanBackendContext, MarzbanDigital, MarzbanMoba
 from refferal.refferal_logic import generate_refferal_code
 from db.db_inject import db_manager as db
 from db.db_model import User
@@ -70,6 +70,7 @@ async def cancel_admin_operation(message: Message, state: FSMContext):
     else:
         await message.answer("ℹ️ Нет активных операций для отмены.")
 
+
 def is_valid_email_simple(email: str) -> bool:
     if not email or not isinstance(email, str):
         return False
@@ -78,11 +79,16 @@ def is_valid_email_simple(email: str) -> bool:
 @router.callback_query(F.data == "change_email")
 async def request_email_with_state(callback: CallbackQuery, state: FSMContext):
     await state.set_state(EmailForm.waiting_for_email)
+    if callback.message is None:
+        return False
     await callback.message.answer("📧 Введите ваш email:")
     await callback.answer()
 
 @router.message(EmailForm.waiting_for_email, F.text)
 async def process_email(message: Message, state: FSMContext):
+    if message.text is None:
+        return False
+    
     email = message.text.strip()
 
     if is_valid_email_simple(email):
@@ -512,15 +518,6 @@ async def process_charge_id(message: Message, state: FSMContext, redis_cache: Re
         await message.answer("❌ Ошибка при начислении баланса. Попробуйте позже.")
         await state.clear()
 
-@admin_router.message(Command("cancel"))
-async def cancel_admin_operation(message: Message, state: FSMContext):
-    """Отмена админской операции"""
-    current_state = await state.get_state()
-    if current_state:
-        await state.clear()
-        await message.answer("❌ Операция отменена.")
-    else:
-        await message.answer("ℹ️ Нет активных операций для отмены.")
 
 # Дополнительная команда для проверки статуса Marzban
 @admin_router.message(Command("check_marzban"))
@@ -550,7 +547,6 @@ async def dig_or_worl(callback: CallbackQuery):
     else:
         panel = MarzbanBackendContext()
 
-    await db.log_user_action(user_id, callback.data)
 
     try:
         async with panel as backend:
@@ -586,6 +582,42 @@ async def dig_or_worl(callback: CallbackQuery):
             reply_markup=VPNInstallKeyboards.back_in_keys()
         )
 
+@router.callback_query(F.data == 'moba')
+async def moba(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    panel = MarzbanMoba()
+
+
+    try:
+        async with panel as backend:
+            res = await backend.get_user(str(user_id))
+            if res:
+                link1 = res['links'][0]
+                sub_link = res['subscription_url']
+                text_for = f"""
+🔗Подписка (Нажмите для копирования):
+`{sub_link}`
+
+🔑Ключ 1:
+```{link1}```
+"""
+                await callback.message.edit_text(
+                    text=text_for,
+                    reply_markup=VPNInstallKeyboards.back_in_keys(),
+                    parse_mode='Markdown'
+                )
+            else:
+                await callback.message.edit_text(
+                    text='Ссылка и подписки здесь будут доступны через 5 минут. Пожалуйста, дождитесь загрузки, и нажмите на кнопку "Moba" снова.',
+                    reply_markup=VPNInstallKeyboards.back_in_keys()
+                )
+    except Exception as e:
+        logger.warning(f'Возника ошибка у юзера {user_id}: {e}')
+        await callback.message.edit_text(
+            text='Этот сервер временно недоступен, попробуй другой.',
+            reply_markup=VPNInstallKeyboards.back_in_keys()
+        )
 
 
 def create_personal_acc_text(balance: int = 0, subscription_end: int = 0) -> str:
@@ -626,8 +658,7 @@ async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
        message =  get_message_by_status('help_to_me', user_data.trial, user_data.subscription_end, user_data.balance)
        link_code = user_data.link
 
-       await db.log_user_action(user_id, callback.data)
-
+   
        await callback.message.edit_text(
            text="Загружаем ссылку..."
        )
@@ -712,8 +743,7 @@ async def trial_per(callback: CallbackQuery, redis_cache: RedisUserCache):
        await process_referral_bonus(user_id)
 
        # Логгирование
-       await db.log_user_action(user_id, callback.data)
-
+   
        message = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end, user_data.balance)
        await callback.message.edit_text(
            text=message['text'],
@@ -795,8 +825,7 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        else:
            keyboard = per_acc.VPNPersAccKeyboards.personal_acc()
 
-       await db.log_user_action(user_id, callback.data)
-
+   
        await callback.message.edit_text(
            text=text_message,
            reply_markup=keyboard
@@ -915,8 +944,7 @@ async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUse
        email = await db.get_email(user_id)
 
        if email is not None:
-            await db.log_user_action(user_id, callback.data)
-            try:
+                    try:
                 await callback.message.delete()
             except:
                 await callback.message.answer(
@@ -991,8 +1019,7 @@ async def buy_key(callback: CallbackQuery, redis_cache: RedisUserCache, state: F
           user_data = await always_cache(redis_cache, user_id, username)
           message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
 
-          await db.log_user_action(user_id, callback.data)
-
+      
           await callback.message.edit_text(
               text=message['text'],
               reply_markup=message['keyboard']
@@ -1014,8 +1041,7 @@ async def invite_handler(callback: CallbackQuery, redis_cache: RedisUserCache):
        message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
        ref_link = generate_refferal_code(user_id)
 
-       await db.log_user_action(user_id, callback.data)
-
+   
        await callback.message.edit_text(
            text=f"{message['text']} \n\n\n {ref_link}",
            reply_markup=message['keyboard']
@@ -1036,8 +1062,7 @@ async def platform_handler(callback: CallbackQuery, redis_cache: RedisUserCache)
            if user:
                sub_link = user['links'][0]
 
-       await db.log_user_action(user_id, callback.data)
-
+   
        await callback.message.edit_text(
           text=f"{message['text']}\n\n🔗 Ссылка на подписку: ```{sub_link}```",
           reply_markup=message['keyboard'],
@@ -1062,8 +1087,7 @@ async def universal_handler(callback: CallbackQuery, redis_cache: RedisUserCache
            new_data = await update_db(data_db, trial='expired')
            user_data = await update_cache_fix(redis_cache, user_id, new_data)
 
-       await db.log_user_action(user_id, callback.data)
-
+   
        message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
        await callback.message.edit_text(
            text=message['text'],

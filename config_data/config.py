@@ -102,6 +102,19 @@ def load_config_marz_dig(path: str | None = None) -> MarzbanDig:
         url=env('MARZBAN_API_URL_DIGITAL')
     )
 
+
+def load_config_marz_mob(path: str | None = None) -> Marzban:
+
+    env: Env = Env()
+    env.read_env(path)
+
+    return Marzban(
+        login=env('MARZBAN_API_URL_MOBA'),
+        password=env('MARZBAN_PASSWORD_MOBA'),
+        url=env('MARZBAN_API_URL_MOBA')
+    )
+
+
 def load_config_db(path: str | None = None) -> DatabaseConfig:
 
     env: Env = Env()

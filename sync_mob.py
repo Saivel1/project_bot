@@ -20,9 +20,9 @@ PANEL_1_CONFIG = {
 
 PANEL_2_CONFIG = {
     'name': 'Синхронизируемая панель (Moba)',
-    'url': 'https://ivvpn.digital',
-    'username': 'admin',
-    'password': 'aX8xH7pD9ugD'
+    'url': 'https://mob.ivvpn.world:8443',
+    'username': 'iv',
+    'password': 'OoRmc1872C3a'
 }
 
 class MarzbanPanel:
