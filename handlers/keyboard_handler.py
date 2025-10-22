@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 from status.status_keys import get_message_by_status
 from datetime import datetime
-from marzban.Backend import MarzbanBackendContext
+from marzban.Backend import MarzbanBackendContext, MarzbanDigital
 from refferal.refferal_logic import generate_refferal_code
 from db.db_inject import db_manager as db
 from db.db_model import User
@@ -22,6 +22,8 @@ from keyboards.vpn_keyboards import VPNInstallKeyboards
 from status.admin_midll import AdminMiddleware
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from yookassa_handler.payments import PaymentYoo
+import re
 
 logger = logging.getLogger(__name__)
 format='[%(asctime)s] #%(levelname)-15s %(filename)s: %(lineno)d - %(pathname)s - %(message)s'
@@ -45,6 +47,7 @@ ADMIN_IDS = [482410857]
 bot = Bot(token=BOT_TOKEN)
 router = Router()
 admin_router = Router()
+yookassa_payment = PaymentYoo()
 
 #####################################
 # Вспомогательные функции
@@ -52,6 +55,43 @@ admin_router = Router()
 admin_router.message.middleware(AdminMiddleware(ADMIN_IDS))
 admin_router.callback_query.middleware(AdminMiddleware(ADMIN_IDS))
 
+class EmailForm(StatesGroup):
+    waiting_for_email = State()
+
+SIMPLE_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+@router.message(Command("cancel"))
+async def cancel_admin_operation(message: Message, state: FSMContext):
+    """Отмена админской операции"""
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
+        await message.answer("❌ Операция отменена. \n Нажмите /start для продолжения")
+    else:
+        await message.answer("ℹ️ Нет активных операций для отмены.")
+
+def is_valid_email_simple(email: str) -> bool:
+    if not email or not isinstance(email, str):
+        return False
+    return bool(re.match(SIMPLE_EMAIL_PATTERN, email.strip()))
+
+@router.callback_query(F.data == "change_email")
+async def request_email_with_state(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EmailForm.waiting_for_email)
+    await callback.message.answer("📧 Введите ваш email:")
+    await callback.answer()
+
+@router.message(EmailForm.waiting_for_email, F.text)
+async def process_email(message: Message, state: FSMContext):
+    email = message.text.strip()
+
+    if is_valid_email_simple(email):
+        await state.set_state(None)
+        await message.answer(f"✅ Email {email} сохранен!")
+        await db.create_or_update_email(message.from_user.id, email)
+        await state.clear()
+    else:
+        await message.answer("Для выхода из режима ввода нажмите /cancel.  \n\n ❌ Неправильный формат email. \n  Попробуйте еще раз:")
 
 #================================
 # Платформа
@@ -135,8 +175,6 @@ def get_platform_message(platform: str) -> dict:
         'text': PLATFORM_INSTRUCTIONS.get(platform, '❌ Платформа не найдена'),
         'keyboard': VPNInstallKeyboards.platform_chosen()
     }
-
-
 
 
 #================================
@@ -229,6 +267,7 @@ def validate_positive_int(value: int, name: str) -> bool:
        logging.warning(f"Некорректное значение {name}: {value}")
        return False
    return True
+
 
 
 # ==============================
@@ -502,6 +541,53 @@ async def check_marzban_status(message: Message):
 # Основные функции
 #####################################
 
+@router.callback_query(F.data.in_(['digital', 'world']))
+async def dig_or_worl(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    if callback.data == 'digital':
+        panel = MarzbanDigital()
+    else:
+        panel = MarzbanBackendContext()
+
+    await db.log_user_action(user_id, callback.data)
+
+    try:
+        async with panel as backend:
+            res = await backend.get_user(str(user_id))
+            if res:
+                link1 = res['links'][0]
+                link2 = res['links'][1]
+                sub_link = res['subscription_url']
+                text_for = f"""
+🔗Подписка (Нажмите для копирования):
+`{sub_link}`
+
+🔑Ключ 1:
+```{link1}```
+
+🔑Ключ 2:
+```{link2}```
+"""
+                await callback.message.edit_text(
+                    text=text_for,
+                    reply_markup=VPNInstallKeyboards.back_in_keys(),
+                    parse_mode='Markdown'
+                )
+            else:
+                await callback.message.edit_text(
+                    text='Ссылка и подписки здесь будут доступны через 5 минут. Пожалуйста, дождитесь загрузки, и нажмите на кнопку "Digital" снова.',
+                    reply_markup=VPNInstallKeyboards.back_in_keys()
+                )
+    except Exception as e:
+        logger.warning(f'Возника ошибка у юзера {user_id}: {e}')
+        await callback.message.edit_text(
+            text='Этот сервер временно недоступен, попробуй другой.',
+            reply_markup=VPNInstallKeyboards.back_in_keys()
+        )
+
+
+
 def create_personal_acc_text(balance: int = 0, subscription_end: int = 0) -> str:
    current_date = int(datetime.timestamp(datetime.now()))
    balance_text = balance if balance else 0
@@ -528,45 +614,6 @@ def help_message(amount: int):
 #####################################
 # Хэндлеры
 #####################################
-
-@router.callback_query(F.data == 'keys')
-async def keys_gen(callback: CallbackQuery, redis_cache: RedisUserCache):
-    user_id = callback.from_user.id
-    username = callback.from_user.username
-
-    try:
-        print("Тут")
-        async with MarzbanBackendContext() as backend:
-            res = await backend.get_user(str(user_id))
-            print(res)
-            link = res['subscription_url']
-            key1 = res['links'][0]
-            key2 = res['links'][1]
-
-        user_data = await always_cache(redis_cache, user_id, username)
-        message = get_message_by_status('help_to_me', user_data.trial, user_data.subscription_end, user_data.balance)
-
-        await callback.message.edit_text(
-            text=f"""
-🔗 Подписка:
-`{link}`
-
-🇨🇭Швейцария ключ:
-`{key1}`
-
-🇩🇪Германия ключ:
-`{key2}`
-""",
-            reply_markup=message['keyboard'],
-            parse_mode='Markdown'
-        )
-
-    except Exception as e:
-        callback.message.edit_text(
-            text='❌ Ошибка загрузки ключей. Попробуйте позже.',
-            reply_markup=None
-        )
-        logging.error(f"Ошибка в turn_on_code для пользователя {user_id}: {e}")
 
 
 @router.callback_query(F.data == 'help_turn_on')
@@ -595,12 +642,14 @@ async def turn_on_code(callback: CallbackQuery, redis_cache: RedisUserCache):
              logging.info(f"Marzban операция успешна для пользователя {user_id}")
        except Exception as e:
          logging.error(f"Ошибка Marzban операции для пользователя {user_id}: {e}")
+         message = get_message_by_status('error_links', user_data.trial, user_data.subscription_end, user_data.balance)
          await callback.message.edit_text(
-             text='Сервис временно недоступен, попробуйте позже.'
+             text=message['text'],
+             reply_markup=message['keyboard']
          )
 
        await callback.message.edit_text(
-               text=f"👇Код ниже, нужно скопировать и добавить из буфера обмена. \n\n 1️⃣ В правом верхнем углу ➕ \n 2️⃣ Вставить из буфера обмена \n\n 🔗Ваш код(нажмите для копирования): \nАвстрия: \n `{link_code}`\n\n Германия: \n `{link_code_germ}`",
+               text=f"👇Код ниже, нужно скопировать и добавить из буфера обмена. \n\n 1️⃣ В правом верхнем углу ➕ \n 2️⃣ Вставить из буфера обмена \n\n 🔗Ваш код(нажмите для копирования): \nШвейцария: \n ```{link_code}```\n\n Германия: \n ```{link_code_germ}```",
           reply_markup=message['keyboard'],
           parse_mode='Markdown'
         )
@@ -625,8 +674,10 @@ async def trial_per(callback: CallbackQuery, redis_cache: RedisUserCache):
 
        if current_date > data_db.subscription_end:
            new_date = current_date + (TRIAL_DAYS * 86400)
+           #new_date = current_date + (TRIAL_DAYS * 60)
        else:
-           new_date = data_db.subscription_end + (TRIAL_DAYS * 86400)
+           #new_date = data_db.subscription_end + (TRIAL_DAYS * 86400)
+           new_date = data_db.subscription_end + (TRIAL_DAYS * 60)
 
        if not validate_positive_int(new_date, "trial_end_date"):
            raise ValueError("Некорректная дата окончания пробного периода")
@@ -747,9 +798,8 @@ async def personal_acc(callback: CallbackQuery, redis_cache: RedisUserCache):
        await db.log_user_action(user_id, callback.data)
 
        await callback.message.edit_text(
-           text=f'{text_message} \n\n 🔗 Ссылка на подписку: \n **`{link}`**',
-           reply_markup=keyboard,
-           parse_mode='Markdown'
+           text=text_message,
+           reply_markup=keyboard
        )
 
    except Exception as e:
@@ -776,113 +826,33 @@ async def start_menu_in_payment(callback: CallbackQuery, redis_cache: RedisUserC
    except Exception as e:
        logging.error(f"Ошибка возврата в главное меню для пользователя {user_id}: {e}")
 
-@router.callback_query(F.data.in_(["to_pay_year", "to_pay_6_months", "to_pay_3_months", "to_pay_month", "to_pay_best"]))
-async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUserCache):
+def yoo_message(amount: int, url: str):
+   keyboard = InlineKeyboardMarkup(inline_keyboard=[
+       [InlineKeyboardButton(text=f"Оплатить {amount} Р", url=url)],
+       [InlineKeyboardButton(text="Главное меню", callback_data="start_menu_in_payment")]
+   ])
+   return keyboard
+
+async def successful_payment(invoice: str, callback: CallbackQuery, redis_cache: RedisUserCache):
    user_id = callback.from_user.id
    username = callback.from_user.username
 
    try:
        user_data = await always_cache(redis_cache, user_id, username)
-
-       plan = {
-           "to_pay_year": 360,
-           "to_pay_6_months": 180,
-           "to_pay_3_months": 90,
-           "to_pay_month": 30,
-           "to_pay_best": 100
-       }
-
-       if callback.data not in plan:
-           logging.error(f"Неизвестный план платежа: {callback.data}")
-           return
-
-       # Помечаем пользователя как eligible для реферальных бонусов
-       await process_referral_bonus(user_id)
-
-       await db.log_user_action(user_id, callback.data)
-       try:
-           await callback.message.delete()
-       except:
-           await callback.message.answer(
-                   text="Загружаем оплату...")
-
-       # Проверяем доступность Marzban перед созданием инвойса
-       _, marzban_available = await safe_marzban_operation(
-           str(user_id),
-           {},  # Пустая операция для проверки
-           "connection_check"
-       )
-
-       cnt = plan[callback.data]
-       if callback.data == 'to_pay_best':
-           monthes = 120
-       else:
-           monthes = plan[callback.data]
-
-       if marzban_available:
-           try:
-               await callback.message.delete()
-           except:
-               logging.info(f'INFO')
-           prices = [LabeledPrice(label="Оплата", amount=cnt)]
-           await callback.message.answer_invoice(
-               title=f"💫 Подписка на {monthes // 30} мес.",
-               description=f'Для оформления подписки необходимо произвести оплату.',
-               payload=callback.data,
-               currency="XTR",
-               prices=prices,
-               start_parameter="premium_payment",
-               reply_markup=help_message(cnt)
-           )
-       else:
-           message = get_message_by_status("payment_unsuccess", user_data.trial, user_data.subscription_end, user_data.balance)
-           await callback.message.answer(
-               text=f"{message['text']}\n\n❌ Сервис временно недоступен. Попробуйте позже.",
-               reply_markup=message['keyboard']
-           )
-
-   except Exception as e:
-       logging.error(f"Ошибка создания платежа для пользователя {user_id}: {e}")
-
-@router.pre_checkout_query()
-async def pre_checkout_query(pre_checkout: PreCheckoutQuery, bot: Bot):
-   await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
-
-@router.message(F.successful_payment)
-async def successful_payment(message: Message, redis_cache: RedisUserCache):
-   payment = message.successful_payment
-   user_id = message.from_user.id
-   charge_id = payment.telegram_payment_charge_id
-   invoice = payment.invoice_payload
-   username = message.from_user.username
-
-   try:
-       user_data = await always_cache(redis_cache, user_id, username)
        current_date = int(datetime.timestamp(datetime.now()))
-
+       logger.error(user_data)
        plan = {
            "to_pay_year": 600,
            "to_pay_6_months": 300,
            "to_pay_3_months": 150,
            "to_pay_month": 50,
-           "to_pay_best": 180
        }
-
-       if invoice not in plan:
-           logging.error(f"Неизвестный план в платеже: {invoice}")
-           await message.answer("❌ Ошибка обработки платежа. Обратитесь в поддержку.")
-           return
 
        amount = plan[invoice]
 
-       if invoice == "to_pay_best":
-           amount_time = 200
-       else:
-           amount_time = plan[invoice]
-
+       amount_time = plan[invoice]
        # Логируем платеж
-       await db.create_payment(user_id, amount, "success", charge_id)
-
+       await db.create_payment(user_id, amount, "success", "yoo_payment")
        # Помечаем пользователя как eligible для реферальных бонусов
        await process_referral_bonus(user_id)
 
@@ -895,7 +865,6 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
        else:
            new_date = user_data.subscription_end + (amount_time * 86400 * 30) // 50
            #new_date = user_data.subscription_end + (amount * 3600 * 6) // 50
-
        if not validate_positive_int(new_date, "subscription_end_date"):
            raise ValueError("Некорректная дата окончания подписки")
 
@@ -907,8 +876,8 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
        )
 
        if not marzban_success:
-           await message.answer("❌ Платеж получен, но произошла ошибка активации. Обратитесь в поддержку.")
-           return
+           print("ОшибкаMarzban операции")
+           return None
 
        # Обновляем кэш
        user_data = await update_cache_fix(
@@ -919,37 +888,119 @@ async def successful_payment(message: Message, redis_cache: RedisUserCache):
            subscription_end=new_date,
            link=new_link
        )
-
        # Обновляем БД
        data_db = await db.get_user(user_id)
        await update_db(data_db, balance=new_balance, subscription_end=new_date, link=new_link)
-
-       messages = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end, user_data.balance)
-
-       await message.answer(
-           text=messages['text'],
-           reply_markup=messages['keyboard']
-       )
-
    except Exception as e:
        logging.error(f"Ошибка обработки платежа для пользователя {user_id}: {e}")
-       await message.answer("❌ Произошла ошибка при обработке платежа. Обратитесь в поддержку.")
 
-@router.callback_query(F.data.in_(['buy_key', 'buy_key_in_install']))
-async def buy_key(callback: CallbackQuery, redis_cache: RedisUserCache):
+@router.callback_query(F.data.in_(["to_pay_year", "to_pay_6_months", "to_pay_3_months", "to_pay_month", "to_pay_best"]))
+async def handler_payment_success(callback: CallbackQuery, redis_cache: RedisUserCache, state: FSMContext):
    user_id = callback.from_user.id
    username = callback.from_user.username
 
    try:
        user_data = await always_cache(redis_cache, user_id, username)
-       message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
 
-       await db.log_user_action(user_id, callback.data)
+       plan = {
+           "to_pay_year": 600,
+           "to_pay_6_months": 300,
+           "to_pay_3_months": 150,
+           "to_pay_month": 50
+       }
 
-       await callback.message.edit_text(
-           text=message['text'],
-           reply_markup=message['keyboard']
-       )
+       if callback.data not in plan:
+           logging.error(f"Неизвестный план платежа: {callback.data}")
+           return
+       email = await db.get_email(user_id)
+
+       if email is not None:
+            await db.log_user_action(user_id, callback.data)
+            try:
+                await callback.message.delete()
+            except:
+                await callback.message.answer(
+                        text="Загружаем оплату...")
+
+            # Проверяем доступность Marzban перед созданием инвойса
+            _, marzban_available = await safe_marzban_operation(
+                str(user_id),
+                {},  # Пустая операция для проверки
+                "connection_check"
+            )
+
+            cnt = plan[callback.data]
+            monthes = plan[callback.data]
+
+            if marzban_available:
+                try:
+                    await callback.message.delete()
+                except:
+                    logging.info(f'INFO')
+
+                amount = cnt
+                await yookassa_payment.create_payment(amount, callback.data, email.email)
+                link = yookassa_payment.link
+
+                await callback.message.answer(
+                    text=f'Вы выбарли подписку на {monthes // 50} мес.💫 \n\n👇Нажмите на кнопку ниже, чтобы оплатить подписку.',
+                    reply_markup=yoo_message(amount, link)
+                )
+
+            else:
+                message = get_message_by_status("payment_unsuccess", user_data.trial, user_data.subscription_end, user_data.balance)
+                await callback.message.answer(
+                    text=f"{message['text']}\n\n❌ Сервис временно недоступен. Попробуйте позже.",
+                    reply_markup=message['keyboard']
+                )
+
+            succeed = await yookassa_payment.check_if_succeed()
+            if succeed == 'YES':
+                print('YES')
+                await successful_payment(callback.data, callback, redis_cache)
+                id_to_send = ADMIN_IDS[0]
+
+                await bot.send_message(
+                    text=f'Пользователь @{username} | ID: {user_id} заплатил: {int(cnt)}',
+                    chat_id=id_to_send,
+                    reply_markup=None
+                )
+            else:
+                logger.info(f'Пользователь {user_id} отказался платить.')
+
+            messages = get_message_by_status('start_menu', user_data.trial, user_data.subscription_end, user_data.balance)
+            await callback.message.answer(
+                text=messages['text'],
+                reply_markup=messages['keyboard']
+            )
+       else:
+            await state.set_state(EmailForm.waiting_for_email)
+            await callback.message.answer("📧 Введите ваш email:")
+            await callback.answer()
+
+   except Exception as e:
+       logging.error(f"Ошибка создания платежа для пользователя {user_id}: {e}")
+
+@router.callback_query(F.data.in_(['buy_key', 'buy_key_in_install']))
+async def buy_key(callback: CallbackQuery, redis_cache: RedisUserCache, state: FSMContext):
+   user_id = callback.from_user.id
+   username = callback.from_user.username
+
+   try:
+       if await db.get_email(user_id):
+          user_data = await always_cache(redis_cache, user_id, username)
+          message = get_message_by_status(callback.data, user_data.trial, user_data.subscription_end, user_data.balance)
+
+          await db.log_user_action(user_id, callback.data)
+
+          await callback.message.edit_text(
+              text=message['text'],
+              reply_markup=message['keyboard']
+          )
+       else:
+          await state.set_state(EmailForm.waiting_for_email)
+          await callback.message.answer("📧 Введите ваш email:")
+          await callback.answer()
    except Exception as e:
        logging.error(f"Ошибка в buy_key для пользователя {user_id}: {e}")
 
@@ -980,18 +1031,20 @@ async def platform_handler(callback: CallbackQuery, redis_cache: RedisUserCache)
    try:
        user_data = await always_cache(redis_cache, user_id, username)
        message = get_platform_message(callback.data)
-       sub_link = user_data.link
+       async with MarzbanBackendContext() as backend:
+           user = await backend.get_user(str(user_id))
+           if user:
+               sub_link = user['links'][0]
 
        await db.log_user_action(user_id, callback.data)
 
        await callback.message.edit_text(
-          text=f"{message['text']}\n\n🔗 Ссылка на подписку: **`{sub_link}`**",
+          text=f"{message['text']}\n\n🔗 Ссылка на подписку: ```{sub_link}```",
           reply_markup=message['keyboard'],
           parse_mode='Markdown'
         )
    except Exception as e:
-       logging.error(f"Ошибка в invite_handler для пользователя {user_id}: {e}")
-
+       logging.error(f"Ошибка в platform_handler для пользователя {user_id}: {e}")
 
 
 @router.callback_query()

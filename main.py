@@ -6,7 +6,7 @@ import asyncio
 from redis_bot.redis_main import RedisUserCache
 from redis_bot.redis_middleware import RedisMiddleware
 from status.block_middleware import UserBlockedMiddleware, UserUnblockedMiddleware
-from messages.sub_reminder import check_and_send_subscription_reminders
+from messages.sub_reminder import check_and_send_subscription_reminders, check_subscription_expiry
 
 
 # Загружаем конфиг в переменную
@@ -57,6 +57,7 @@ async def main():
     dp.callback_query.middleware(RedisMiddleware(redis_cache_instance))
     dp.message.middleware(RedisMiddleware(redis_cache_instance))
 
+    asyncio.create_task(check_subscription_expiry(bot))
     asyncio.create_task(check_and_send_subscription_reminders(bot))
     dp.include_router(keyboard_handler.router)
     dp.include_router(keyboard_handler.admin_router)

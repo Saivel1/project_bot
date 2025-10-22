@@ -57,3 +57,15 @@ class VPNInstallKeyboards:
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="install_vpn")]
         ])
         return keyboard
+
+    @staticmethod
+    def reopen_help():
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="help_turn_on")]])
+        return keyboard
+
+    @staticmethod
+    def back_in_keys():
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="keys")]])
+        return keyboard

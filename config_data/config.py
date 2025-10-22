@@ -37,6 +37,16 @@ class Marzban:
     password: str
     url: str
 
+@dataclass
+class MarzbanDig:
+    login: str
+    password: str
+    url: str
+
+@dataclass
+class YooConf:
+    account_id: int
+    secret_key: str
 
 
 def load_config(path: str | None = None) -> Config:
@@ -81,6 +91,17 @@ def load_config_marz(path: str | None = None) -> Marzban:
         url=env('MARZBAN_API_URL')
     )
 
+def load_config_marz_dig(path: str | None = None) -> MarzbanDig:
+
+    env: Env = Env()
+    env.read_env(path)
+
+    return MarzbanDig(
+        login=env('MARZBAN_USER_DIGITAL'),
+        password=env('MARZBAN_PASSWORD_DIGITAL'),
+        url=env('MARZBAN_API_URL_DIGITAL')
+    )
+
 def load_config_db(path: str | None = None) -> DatabaseConfig:
 
     env: Env = Env()
@@ -92,4 +113,14 @@ def load_config_db(path: str | None = None) -> DatabaseConfig:
         db_user=env('DB_USER'),
         db_password=env('DB_PASSWORD'),
         db_port=env('DB_PORT')
+    )
+
+def load_yookassa_config(path: str | None = None) -> YooConf:
+
+    env: Env = Env()
+    env.read_env(path)
+
+    return YooConf(
+        account_id=env('ACCOUNT_ID'),
+        secret_key=env('SECRET_KEY')
     )

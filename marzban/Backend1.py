@@ -3,17 +3,14 @@ import aiohttp
 import asyncio
 import json
 import logging
-from config_data.config import load_config_marz, load_config_marz_dig
+from config_data.config import load_config_marz
 
 config = load_config_marz('.env')
 MARZBAN_API_URL = config.url
 MARZBAN_USER = config.login
 MARZBAN_PASSWORD = config.password
 
-config_dig = load_config_marz_dig('.env')
-MARZBAN_API_URL_DIGITAL = config_dig.url
-MARZBAN_USER_DIGITAL = config_dig.login
-MARZBAN_PASSWORD_DIGITAL = config_dig.password
+
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +35,8 @@ class MarzbanBackendContext:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Выход из контекстного менеджера"""
-        await self._cleanup_session()
+        if self.session:
+            await self.session.close()
 
     async def authorize(self) -> None:
         data = {
@@ -53,20 +51,6 @@ class MarzbanBackendContext:
                 self.headers["Authorization"] = f"Bearer {token}"
             else:
                 logger.warning(f"Ошибка авторизации: {response.status}")
-
-    async def _cleanup_session(self):
-        """Правильное закрытие сессии"""
-        if self.session and not self.session.closed:
-            try:
-                await self.session.close()
-                # Даем время на закрытие соединений
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.warning(f"Ошибка при закрытии сессии: {e}")
-            finally:
-                self.session = None
-                self._authorized = False
-                logger.debug(f"Сессия закрыта")
 
     async def create_user(self, username: str) -> dict:
         data = {
@@ -133,23 +117,3 @@ class MarzbanBackendContext:
             else:
                 logger.warning(f"Ошибка изменения пользователя: {response.status}")
         return None # type: ignore
-
-
-class MarzbanDigital(MarzbanBackendContext):
-    def __init__(self):
-        super().__init__()
-        self.base_url = MARZBAN_API_URL_DIGITAL
-
-    async def authorize(self) -> None:
-        data = {
-            "username": MARZBAN_USER_DIGITAL,
-            "password": MARZBAN_PASSWORD_DIGITAL,
-        }
-
-        async with self.session.post(f"{self.base_url}/api/admin/token", data=data) as response: # type: ignore
-            if response.status == 200:
-                result = await response.json()
-                token = result.get("access_token")
-                self.headers["Authorization"] = f"Bearer {token}"
-            else:
-                logger.warning(f"Ошибка авторизации: {response.status}")

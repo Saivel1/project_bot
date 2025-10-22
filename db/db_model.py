@@ -51,6 +51,11 @@ class Payment:
     amount: int = 0
     charge_id: str = ''
 
+@dataclass(slots=True, frozen=True)
+class Email:
+    user_id: int = 0
+    email: str = ''
+
 class DatabaseManager:
     def __init__(self, db_config):
         self.db_config = db_config
@@ -137,6 +142,14 @@ class DatabaseManager:
         );
         """
 
+        create_emails_table = """
+        CREATE TABLE IF NOT EXISTS emails (
+            user_id BIGINT NOT NULL,
+            email VARCHAR(255) DEFAULT '',
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        """
+
         # Создание индексов для оптимизации запросов
         create_indexes = [
             "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);",
@@ -155,6 +168,7 @@ class DatabaseManager:
                 await conn.execute(create_user_actions_table)
                 await conn.execute(create_refferals_table)
                 await conn.execute(create_payments_table)
+                await conn.execute(create_emails_table)
 
                 # Создаем индексы
                 for index_query in create_indexes:
@@ -490,6 +504,73 @@ class DatabaseManager:
             except Exception as e:
                 logging.error(f"Ошибка создания платежа для пользователя {user_id}: {e}")
                 return None
+
+    # ===========================================
+    # МЕТОДЫ ДЛЯ РАБОТЫ С Email
+    # ===========================================
+
+    async def create_email(self, user_id: int, email: str) -> Optional[int]:
+        """Создание записи о email"""
+        query = """
+        INSERT INTO emails (user_id, email)
+        VALUES ($1, $2)
+        """
+
+        async with self.pool.acquire() as conn:
+            try:
+                email = await conn.fetchval(query, user_id, email)
+                if email:
+                    return email.email
+                return None
+            except Exception as e:
+                logging.error(f"Ошибка создания email для пользователя {user_id}: {e}")
+                return None
+
+    async def update_email(self, user_id: int, email: str) -> Optional[int]:
+        """Обновленеи записи о платеже"""
+        query = """
+        UPDATE emails SET
+            email = $2
+        WHERE user_id = $1
+        VALUES ($1, $2)
+        """
+
+        async with self.pool.acquire() as conn:
+            try:
+                email = await conn.execute(query, user_id, email)
+                return email
+            except Exception as e:
+                logging.error(f"Ошибка обновления email для пользователя {user_id}: {e}")
+                return None
+
+    async def get_email(self, user_id: int):
+        """Обновленеи записи о платеже"""
+        query = """
+        SELECT email
+        FROM emails
+        WHERE user_id = $1
+        """
+
+        async with self.pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(query, user_id)
+                if row:
+                    return Email(
+                        user_id=user_id,
+                        email=row['email']
+                        )
+                return None
+            except Exception as e:
+                logging.error(f"Ошибка получение email для пользователя {user_id}: {e}")
+                return None
+
+    async def create_or_update_email(self, user_id: int, email: str):
+        """Создание или обновление записи о email"""
+        existing_email = await self.get_email(user_id)
+        if existing_email and existing_email.email != email:
+            return await self.update_email(user_id, email)
+        else:
+            return await self.create_email(user_id, email)
 
 
 
